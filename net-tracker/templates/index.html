@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网络链路检测工具</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg-card: #161b22; --bg-input: #0d1117;
+    --border: #30363d; --border-hover: #58a6ff;
+    --text: #c9d1d9; --text-dim: #8b949e; --text-bright: #f0f6fc;
+    --accent: #58a6ff; --accent2: #3fb950; --warn: #d29922;
+    --danger: #f85149; --purple: #bc8cff; --teal: #39d353;
+    --orange: #f0883e; --pink: #db61a2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.6;
+  }
+  .header {
+    background: var(--bg-card); border-bottom: 1px solid var(--border);
+    padding: 16px 24px; display: flex; align-items: center; gap: 12px;
+  }
+  .header h1 { font-size: 18px; font-weight: 600; color: var(--text-bright); }
+  .header .badge { font-size: 11px; background: #1f2937; color: var(--text-dim); padding: 3px 8px; border-radius: 10px; }
+
+  .input-bar { max-width: 1100px; margin: 32px auto 0; padding: 0 24px; display: flex; gap: 10px; }
+  .input-bar input {
+    flex: 1; padding: 12px 16px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg-input); color: var(--text);
+    font-size: 15px; outline: none; transition: border-color .2s;
+  }
+  .input-bar input:focus { border-color: var(--accent); }
+  .input-bar button {
+    padding: 12px 28px; border-radius: 8px; border: none;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: background .2s;
+  }
+  .input-bar button:hover { background: #4090e0; }
+  .input-bar button:disabled { background: #30363d; cursor: not-allowed; }
+  .hints { max-width: 1100px; margin: 8px auto 0; padding: 0 24px; font-size: 12px; color: var(--text-dim); }
+
+  /* 弹出式进度卡片 */
+  .loading-overlay {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 999;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.4s ease;
+  }
+  .loading-overlay.show { opacity: 1; pointer-events: auto; }
+  .loading-overlay .prog-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 32px;
+    width: 420px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+  }
+  .hidden { display: none !important; }
+
+  /* progress panel */
+  .prog-panel { width: 100%; }
+  .prog-title { font-size: 15px; font-weight: 600; color: var(--text-bright); margin-bottom: 14px; text-align: center; }
+  .prog-bar-wrap {
+    width: 100%; height: 6px; background: var(--bg-input); border-radius: 3px;
+    overflow: hidden; margin-bottom: 16px;
+  }
+  .prog-bar-fill {
+    height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 3px; width: 0%; transition: width .4s ease;
+  }
+  .prog-percent { font-size: 12px; color: var(--text-dim); text-align: center; margin-bottom: 14px; }
+  .prog-steps { display: flex; flex-direction: column; gap: 2px; }
+  .prog-step {
+    display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+    border-radius: 6px; font-size: 13px; color: var(--text-dim);
+    transition: all .2s; border: 1px solid transparent;
+  }
+  .prog-step.active {
+    color: var(--text-bright); background: rgba(88,166,255,0.08);
+    border-color: rgba(88,166,255,0.2);
+  }
+  .prog-step.done { color: var(--accent2); }
+  .prog-step.error { color: var(--danger); }
+  .prog-step-icon {
+    width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 10px;
+    border: 1.5px solid var(--border);
+  }
+  .prog-step.active .prog-step-icon { border-color: var(--accent); }
+  .prog-step.done .prog-step-icon { border-color: var(--accent2); background: var(--accent2); color: #0d1117; }
+  .prog-step.error .prog-step-icon { border-color: var(--danger); background: var(--danger); color: #0d1117; }
+  .prog-step-text { flex: 1; }
+  .prog-step-time { font-size: 11px; font-family: "SF Mono", Monaco, monospace; color: var(--text-dim); }
+
+  /* topology */
+  .topo-section { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+  .topo-section h2 { font-size: 14px; font-weight: 500; color: var(--text-dim); margin-bottom: 12px; }
+  .topo-container {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; position: relative; min-height: 320px;
+  }
+  .topo-container svg { width: 100%; display: block; }
+  .topo-empty {
+    display: flex; align-items: center; justify-content: center;
+    height: 320px; color: var(--text-dim); font-size: 14px;
+  }
+  .topo-empty.blink { animation: blink 1s ease-in-out 3; }
+
+  /* 跳转表格 */
+  .hop-table-section { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+  .hop-table-section h2 { font-size: 14px; font-weight: 500; color: var(--text-dim); margin-bottom: 12px; }
+  .hop-table-wrap {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    overflow-x: auto; max-height: 500px; overflow-y: auto;
+  }
+  .hop-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .hop-table thead { position: sticky; top: 0; z-index: 2; }
+  .hop-table th {
+    background: #1a2230; color: var(--text-dim); font-weight: 500; text-align: left;
+    padding: 10px 14px; border-bottom: 2px solid var(--border); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .hop-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .hop-table tbody tr:hover { background: rgba(88, 166, 255, 0.04); }
+  .hop-table tbody tr:last-child td { border-bottom: none; }
+  .hop-num { display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 50%; font-size: 12px; font-weight: 700;
+    color: var(--text-bright); background: #1f2937; }
+  .hop-num.timeout { background: #2a1a1a; color: var(--danger); }
+  .hop-num.reached { background: #1a2e1a; color: var(--accent2); }
+  .hop-ip { font-family: "SF Mono", Monaco, monospace; color: var(--accent); font-size: 13px; }
+  .hop-ip.star { color: var(--text-dim); }
+  .hop-tms { font-family: "SF Mono", Monaco, monospace; color: var(--warn); font-size: 12px; }
+  .hop-info { font-size: 12px; color: var(--text-dim); max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hop-tag { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 10px; margin-left: 6px;
+    background: #1f2937; color: var(--text-dim); }
+  .hop-tag.local { background: #1a2a1a; color: var(--accent2); }
+  .hop-tag.isp { background: #1a1a2e; color: var(--purple); }
+  .hop-tag.cloud { background: #2a1a2a; color: var(--teal); }
+  .hop-table-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+  .hop-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .hop-table-wrap::-webkit-scrollbar-track { background: transparent; }
+
+  /* 域名解析链路表格 */
+  .link-table-section { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+  .link-table-section h2 { font-size: 14px; font-weight: 500; color: var(--text-dim); margin-bottom: 12px; }
+  .link-table-wrap {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden;
+  }
+  .link-cname-area {
+    padding: 16px 18px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .link-cname-label { font-size: 11px; color: var(--text-dim); margin-right: 4px; }
+  .link-table-scroll { overflow-x: auto; max-height: 400px; overflow-y: auto; }
+
+  @keyframes blink { 50% { opacity: 0.3; } }
+
+  /* step cards */
+  .steps-section { max-width: 1100px; margin: 0 auto 40px; padding: 0 24px; }
+  .step-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 12px; overflow: hidden;
+  }
+  .step-header {
+    display: flex; align-items: flex-start; gap: 10px; padding: 14px 18px;
+    cursor: pointer; user-select: none; flex-wrap: wrap;
+  }
+  .step-header:hover { background: rgba(255,255,255,0.03); }
+  .step-num {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .step-num.ok { background: #1a3a2a; color: var(--accent2); }
+  .step-num.warn { background: #3a2a0a; color: var(--warn); }
+  .step-num.err { background: #3a1a1a; color: var(--danger); }
+  .step-title { font-size: 14px; font-weight: 600; color: var(--text-bright); flex-shrink: 0; }
+  .step-summary {
+    font-size: 12px; color: var(--text-dim); margin-left: auto; flex: 1; min-width: 0;
+    text-align: right; white-space: normal; word-break: break-all; line-height: 1.6;
+  }
+  .step-summary .sep-line { display: block; border-top: 1px solid var(--border); padding-top: 2px; margin-top: 2px; }
+  .step-arrow { font-size: 12px; color: var(--text-dim); transition: transform .2s; }
+  .step-card.open .step-arrow { transform: rotate(180deg); }
+  .step-body {
+    display: none; padding: 0 18px 18px; font-size: 13px;
+    border-top: 1px solid var(--border);
+  }
+  .step-card.open .step-body { display: block; }
+
+  .kv { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--text-dim); min-width: 110px; flex-shrink: 0; }
+  .kv .v { color: var(--text); word-break: break-all; }
+  .kv .v.ip { font-family: "SF Mono", "Fira Code", monospace; color: var(--accent); }
+  .kv .v.warn { color: var(--warn); }
+  .kv .v.good { color: var(--accent2); }
+  .kv .v.tag {
+    display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 4px;
+    margin-right: 4px; margin-bottom: 2px;
+  }
+  .tag-gw { background: #1a3a2a; color: var(--accent2); }
+  .tag-vpn { background: #3a2a0a; color: var(--warn); }
+  .tag-dns { background: #1a2a3a; color: var(--accent); }
+  .tag-cdn { background: #2a1a3a; color: var(--purple); }
+  .tag-ip { background: #1f2937; color: var(--text); }
+
+  .chain { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0; }
+  .chain-node {
+    font-size: 12px; background: var(--bg-input); border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 4px; font-family: monospace; color: var(--accent);
+  }
+  .chain-arrow { color: var(--text-dim); }
+  .chain-node.root { color: var(--text-bright); border-color: var(--accent); }
+  .chain-node.target { color: var(--accent2); border-color: var(--accent2); }
+
+  @keyframes flowDash { to { stroke-dashoffset: -24; } }
+  @keyframes nodePulse { 0%,100% { r: 28; opacity: 0.3; } 50% { r: 34; opacity: 0.1; } }
+  .edge-flow { animation: flowDash 1s linear infinite; }
+  .node-pulse { animation: nodePulse 2s ease-in-out infinite; }
+
+  .status-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg-card);
+    border-top: 1px solid var(--border); padding: 10px 24px;
+    display: flex; align-items: center; gap: 10px; font-size: 12px; z-index: 10;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .status-dot.idle { background: var(--text-dim); }
+  .status-dot.done { background: var(--accent2); }
+  .status-dot.err { background: var(--danger); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .error-box {
+    max-width: 1100px; margin: 24px auto; padding: 0 24px;
+  }
+  .error-msg {
+    background: #3a1a1a; border: 1px solid var(--danger); border-radius: 8px;
+    padding: 16px 20px; color: var(--danger); font-size: 14px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2">
+    <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9" stroke-dasharray="4 4"/>
+    <path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>
+  </svg>
+  <h1>网络链路检测</h1>
+  <span class="badge">v1.1</span>
+</div>
+
+<!-- 弹出式进度卡片 -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="prog-panel">
+    <div class="prog-title">🔍 正在检测 <span id="progDomain" style="color:var(--accent)"></span></div>
+    <div class="prog-bar-wrap"><div class="prog-bar-fill" id="progBarFill"></div></div>
+    <div class="prog-percent" id="progPercent">0%</div>
+    <div class="prog-steps" id="progSteps"></div>
+  </div>
+</div>
+
+<form method="POST" id="detectForm">
+<div class="input-bar">
+  <input type="text" name="domain" id="domainInput" placeholder="输入域名，如 www.baidu.com"
+         value="{{ domain or '' }}" autofocus>
+  <button type="submit" id="detectBtn">开始检测</button>
+</div>
+</form>
+<div class="hints">
+  示例：github.com (海外CDN) · cloud.tencent.com (腾讯云) · www.aliyun.com (阿里云)
+</div>
+
+<!-- 错误提示 -->
+{% if error %}
+<div class="error-box">
+  <div class="error-msg">✗ {{ error }}</div>
+</div>
+{% endif %}
+
+<!-- 拓扑图 -->
+<div class="topo-section">
+  <h2>📡 网络拓扑</h2>
+  <div class="topo-container" id="topoContainer">
+    <div class="topo-empty {% if result %}blink{% endif %}" id="topoEmpty">
+      {% if result %}
+      正在渲染拓扑图...
+      {% else %}
+      👆 输入域名并点击"开始检测"，拓扑图将在此渲染
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- 域名解析链路 -->
+<div class="link-table-section" id="linkTableSection" {% if not result %}style="display:none"{% endif %}>
+  <h2>🌐 域名解析链路</h2>
+  <div class="link-table-wrap">
+    <div class="link-cname-area" id="linkCnameArea"></div>
+    <div class="link-table-scroll">
+      <table class="hop-table">
+        <thead>
+          <tr>
+            <th style="width:50px">#</th>
+            <th style="width:180px">IP 地址</th>
+            <th>运营商归属</th>
+            <th style="width:150px">路由方式</th>
+            <th style="width:80px">状态</th>
+          </tr>
+        </thead>
+        <tbody id="linkTableBody">
+          <tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-dim)">正在渲染解析数据...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 网络跳转列表 -->
+<div class="hop-table-section" id="hopTableSection" {% if not result %}style="display:none"{% endif %}>
+  <h2>🔗 路由跳转列表 (Traceroute)</h2>
+  <div class="hop-table-wrap">
+    <table class="hop-table">
+      <thead>
+        <tr>
+          <th style="width:50px">跳数</th>
+          <th style="width:150px">节点</th>
+          <th style="width:70px">延迟</th>
+          <th>详情</th>
+          <th style="width:120px">标签</th>
+        </tr>
+      </thead>
+      <tbody id="hopTableBody">
+        <tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-dim)">正在渲染跳转数据...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 分步结果 -->
+<div class="steps-section" id="stepsSection">
+  {% if result %}
+  <div style="text-align:center;padding:40px;color:var(--text-dim)">正在渲染检测结果...</div>
+  {% endif %}
+</div>
+
+<!-- 状态栏 -->
+<div class="status-bar">
+  <div class="status-dot {{ 'done' if result else 'idle' }}" id="statusDot"></div>
+  <span id="statusText">{{ ('✓ 检测完成 — ' + domain) if result else '就绪' }}</span>
+</div>
+
+{% if result %}
+<script>
+// ── 服务端注入的检测数据 ──────────────────────────────────
+window.__DETECT_DATA__ = {{ result | safe }};
+</script>
+{% endif %}
+
+<script>
+// ── 拓扑图渲染引擎 ────────────────────────────────────────
+
+function renderTopology(data) {
+  const container = document.getElementById('topoContainer');
+  const emptyHint = document.getElementById('topoEmpty');
+  emptyHint.style.display = 'none';
+
+  const nodes = [], edges = [];
+  const local = data.local || {}, dnsData = data.dns || {},
+        resolution = data.resolution || {}, routing = data.routing || {},
+        tls = data.tls || {};
+  let nid = 0;
+
+  const localIp = local.local_ip || '?.?.?.?';
+  const iface = local.default_interface || '?';
+  const gw = local.default_gateway || '?.?.?.?';
+
+  nodes.push({ id: `n${nid++}`, type: 'local', label: '本机出口', detail: localIp + '\n(' + iface + ')', tier: 0, isVpn: local.is_vpn });
+  nodes.push({ id: `n${nid++}`, type: 'gateway', label: '默认网关', detail: gw, tier: 1 });
+  edges.push({ from: nodes[0].id, to: nodes[1].id, label: local.is_vpn ? iface + '(VPN)' : iface, style: local.is_vpn ? 'vpn' : 'direct' });
+
+  let dnsNodeIds = [];
+  (dnsData.servers || []).forEach((ns, i) => {
+    nodes.push({ id: `n${nid++}`, type: 'dns', label: 'DNS ' + (i === 0 ? '主' : '备'), detail: ns, tier: 2 });
+    dnsNodeIds.push(nodes[nodes.length - 1].id);
+    edges.push({ from: nodes[1].id, to: nodes[nodes.length - 1].id, label: 'DNS 查询', style: 'dns' });
+  });
+
+  let cnameNodeIds = [];
+  (resolution.cname_chain || []).forEach((cn, i) => {
+    let subType = 'cdn';
+    if (cn.includes('icloudwaf') || cn.includes('waf')) subType = 'waf';
+    else if (cn.includes('dsa.dnsv1')) subType = 'dsa';
+    else if (cn.includes('cdn') || cn.includes('kunlun') || cn.includes('lxdns') || cn.includes('edgekey') || cn.includes('akamai')) subType = 'cdn';
+    const typeLabels = { cdn: 'CDN', waf: 'WAF', dsa: 'DSA 加速' };
+    nodes.push({ id: `n${nid++}`, type: 'cname', label: typeLabels[subType] || 'CNAME', detail: cn, tier: 3, subType });
+    cnameNodeIds.push(nodes[nodes.length - 1].id);
+    if (i === 0 && dnsNodeIds.length > 0) {
+      edges.push({ from: dnsNodeIds[0], to: nodes[nodes.length - 1].id, label: '解析', style: 'resolve' });
+    } else if (i > 0) {
+      edges.push({ from: cnameNodeIds[i - 1], to: nodes[nodes.length - 1].id, label: 'CNAME', style: 'resolve' });
+    }
+  });
+
+  let targetNodeIds = [];
+  (resolution.a_records || []).forEach((ip, i) => {
+    nodes.push({ id: `n${nid++}`, type: 'target', label: i === 0 ? '目标服务器' : '目标 ' + (i + 1), detail: ip, tier: 4 });
+    targetNodeIds.push(nodes[nodes.length - 1].id);
+    if (cnameNodeIds.length > 0) {
+      edges.push({ from: cnameNodeIds[cnameNodeIds.length - 1], to: nodes[nodes.length - 1].id, label: '回源', style: 'resolve' });
+    } else if (dnsNodeIds.length > 0) {
+      edges.push({ from: dnsNodeIds[0], to: nodes[nodes.length - 1].id, label: '解析', style: 'resolve' });
+    }
+    if (i < 2) {
+      const ri = routing[ip] || {};
+      const isDirect = ri.is_direct !== false;
+      edges.push({ from: nodes[1].id, to: nodes[nodes.length - 1].id, label: isDirect ? '直连路由' : (ri.interface || '隧道'), style: isDirect ? 'route' : 'tunnel' });
+    }
+  });
+
+  if (tls.using_proxy) {
+    nodes.push({ id: `n${nid++}`, type: 'proxy', label: '代理', detail: tls.proxy_address || '?', tier: 1.5 });
+    edges.push({ from: nodes[0].id, to: nodes[nodes.length - 1].id, label: '代理', style: 'vpn' });
+    if (targetNodeIds.length > 0) {
+      edges.push({ from: nodes[nodes.length - 1].id, to: targetNodeIds[0], label: '转发', style: 'vpn' });
+    }
+  }
+
+  const width = 1000, minHeight = 360, marginX = 60, marginY = 60;
+  const usableX = width - 2 * marginX;
+  const tiers = {};
+  nodes.forEach(n => { if (!tiers[n.tier]) tiers[n.tier] = []; tiers[n.tier].push(n); });
+  const tierKeys = Object.keys(tiers).map(Number).sort((a, b) => a - b);
+  const maxPerTier = Math.max(...tierKeys.map(t => tiers[t].length));
+  const usableY = Math.max(minHeight, maxPerTier * 90 + marginY * 2);
+  const actualHeight = usableY;
+
+  nodes.forEach(n => {
+    const tIndex = tierKeys.indexOf(n.tier);
+    const sameTier = tiers[n.tier];
+    const idx = sameTier.indexOf(n);
+    n.x = marginX + (tIndex / Math.max(1, tierKeys.length - 1)) * usableX;
+    const spacing = usableY / Math.max(1, sameTier.length + 1);
+    n.y = spacing * (idx + 1);
+  });
+
+  const pal = {
+    local: '#58a6ff', localVpn: '#f0883e', gateway: '#3fb950', dns: '#bc8cff',
+    cname: '#f0883e', waf: '#f85149', dsa: '#d29922', target: '#3fb950', proxy: '#f85149',
+    edgeDirect: '#3fb950', edgeDns: '#8b949e', edgeResolve: '#58a6ff', edgeVpn: '#f85149',
+    edgeRoute: '#d29922', bg: '#161b22'
+  };
+
+  function curvedEdge(x1, y1, x2, y2) {
+    const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
+    const dx = x2 - x1, dy = y2 - y1;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const curvature = Math.min(dist * 0.25, 40);
+    const angle = Math.atan2(dy, dx) + Math.PI / 2;
+    const cx = midX + Math.cos(angle) * curvature;
+    const cy = midY + Math.sin(angle) * curvature;
+    return 'M ' + x1 + ' ' + y1 + ' Q ' + cx + ' ' + cy + ' ' + x2 + ' ' + y2;
+  }
+  function edgeColor(s) {
+    const m = { direct: pal.edgeDirect, dns: pal.edgeDns, resolve: pal.edgeResolve, vpn: pal.edgeVpn, route: pal.edgeRoute, tunnel: pal.edgeVpn };
+    return m[s] || pal.edgeResolve;
+  }
+  function nodeColor(n) {
+    if (n.type === 'local') return n.isVpn ? pal.localVpn : pal.local;
+    if (n.type === 'gateway') return pal.gateway;
+    if (n.type === 'dns') return pal.dns;
+    if (n.type === 'cname') return pal[n.subType] || pal.cname;
+    if (n.type === 'target') return pal.target;
+    if (n.type === 'proxy') return pal.proxy;
+    return pal.local;
+  }
+  function nodeIcon(n) {
+    if (n.type === 'local') return '💻'; if (n.type === 'gateway') return '📡';
+    if (n.type === 'dns') return '🌐'; if (n.type === 'cname' && n.subType === 'waf') return '🛡';
+    if (n.type === 'cname') return '☁'; if (n.type === 'target') return '🖥';
+    if (n.type === 'proxy') return '🔄'; return '●';
+  }
+
+  let s = '<svg viewBox="0 0 ' + width + ' ' + actualHeight + '" xmlns="http://www.w3.org/2000/svg">';
+  s += '<rect width="100%" height="100%" fill="' + pal.bg + '"/>';
+  s += '<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#30363d" stroke-width="0.5" opacity="0.5"/></pattern></defs>';
+  s += '<rect width="100%" height="100%" fill="url(#grid)"/>';
+
+  const tierLabels = ['出口', '网关', 'DNS', 'CDN/WAF', '目标'];
+  tierKeys.forEach(t => {
+    const nn = tiers[t][0];
+    s += '<text x="' + nn.x + '" y="22" text-anchor="middle" fill="#8b949e" font-size="11">' + (tierLabels[t] || 'T' + t) + '</text>';
+    s += '<line x1="' + nn.x + '" y1="28" x2="' + nn.x + '" y2="' + (marginY - 6) + '" stroke="#30363d" stroke-dasharray="2 4" stroke-width="1"/>';
+  });
+
+  edges.forEach(e => {
+    const from = nodes.find(n => n.id === e.from), to = nodes.find(n => n.id === e.to);
+    if (!from || !to) return;
+    const col = edgeColor(e.style), path = curvedEdge(from.x, from.y, to.x, to.y);
+    const isFlow = (e.style === 'route' || e.style === 'direct');
+    s += '<path d="' + path + '" fill="none" stroke="' + col + '" stroke-width="' + (isFlow ? 2 : 1.5) + '" ' + (isFlow ? 'stroke-dasharray="6 6" class="edge-flow"' : 'stroke-dasharray="4 4" opacity="0.7"') + '/>';
+    const mx = (from.x + to.x) / 2, my = (from.y + to.y) / 2 + 14;
+    s += '<text x="' + mx + '" y="' + my + '" text-anchor="middle" fill="' + col + '" font-size="10" opacity="0.9">' + e.label + '</text>';
+  });
+
+  nodes.forEach(n => {
+    const col = nodeColor(n);
+    const radius = n.type === 'target' ? 22 : n.type === 'gateway' ? 26 : 30;
+    s += '<circle cx="' + n.x + '" cy="' + n.y + '" r="' + (radius + 6) + '" fill="' + col + '" opacity="0.1" class="node-pulse"/>';
+    s += '<circle cx="' + n.x + '" cy="' + n.y + '" r="' + radius + '" fill="' + pal.bg + '" stroke="' + col + '" stroke-width="2.5"/>';
+    s += '<text x="' + n.x + '" y="' + (n.y + 4) + '" text-anchor="middle" font-size="16">' + nodeIcon(n) + '</text>';
+    s += '<text x="' + n.x + '" y="' + (n.y + radius + 18) + '" text-anchor="middle" fill="' + col + '" font-size="12" font-weight="600">' + n.label + '</text>';
+    s += '<text x="' + n.x + '" y="' + (n.y + radius + 34) + '" text-anchor="middle" fill="#8b949e" font-size="10" font-family="monospace">' + n.detail + '</text>';
+  });
+
+  s += '</svg>';
+
+  let warningHTML = '';
+  if (local.is_vpn) {
+    warningHTML += '<div style="position:absolute;top:12px;left:50%;transform:translateX(-50%);background:#3a2a0a;border:1px solid ' + pal.localVpn + ';padding:8px 16px;border-radius:6px;font-size:12px;color:' + pal.localVpn + ';display:flex;align-items:center;gap:6px;">⚠️ 检测到 VPN/隧道网卡 (' + iface + ')，流量可能经过加密隧道</div>';
+  }
+  if (tls.using_proxy) {
+    warningHTML += '<div style="position:absolute;top:' + (local.is_vpn ? '52px' : '12px') + ';left:50%;transform:translateX(-50%);background:#3a1a1a;border:1px solid ' + pal.proxy + ';padding:8px 16px;border-radius:6px;font-size:12px;color:' + pal.proxy + ';display:flex;align-items:center;gap:6px;">⚠️ 检测到代理: ' + (tls.proxy_address || '?') + '</div>';
+  }
+
+  container.innerHTML = '<div style="position:relative;">' + s + warningHTML + '</div>';
+}
+
+
+// ── 分步结果卡片 ──────────────────────────────────────────
+
+function formatJSON(obj) {
+  if (!obj || Object.keys(obj).length === 0) return '—';
+  return Object.entries(obj).map(function(e) {
+    return '<div style="padding:2px 0;"><span style="color:var(--text-dim);font-size:11px;">' + e[0] + ':</span> <span class="v" style="word-break:break-all;">' + e[1] + '</span></div>';
+  }).join('');
+}
+
+function renderSteps(data) {
+  const section = document.getElementById('stepsSection');
+  const local = data.local || {}, dns = data.dns || {}, resolution = data.resolution || {},
+        ipInfo = data.ip_info || {}, routing = data.routing || {},
+        tls = data.tls || {}, proxy = data.proxy_tunnel || {};
+
+  const steps = [
+    {
+      num: 1, title: '本机出口/默认路由',
+      summary: (local.default_interface || '?') + ' → ' + (local.default_gateway || '?') + (local.is_vpn ? ' (VPN)' : ''),
+      status: local.is_vpn ? 'warn' : 'ok',
+      body: '<div class="kv"><span class="k">默认网卡</span><span class="v ip">' + (local.default_interface || '?') + '</span></div>' +
+            '<div class="kv"><span class="k">默认网关</span><span class="v ip">' + (local.default_gateway || '?') + '</span></div>' +
+            '<div class="kv"><span class="k">本机 IP</span><span class="v ip">' + (local.local_ip || '?') + '</span></div>' +
+            '<div class="kv"><span class="k">VPN/隧道</span><span class="v ' + (local.is_vpn ? 'warn' : 'good') + '">' + (local.is_vpn ? '⚠️ 是 (' + (local.vpn_type || '') + ')' : '✓ 否（直连）') + '</span></div>'
+    },
+    {
+      num: 2, title: 'DNS 配置',
+      summary: dns.servers ? dns.servers.join(', ') : '获取中...',
+      status: 'ok',
+      body: (dns.labels || []).map(function(l) { return '<div class="kv"><span class="k">DNS</span><span class="v tag tag-dns">' + l + '</span></div>'; }).join('') +
+            (dns.details || []).map(function(d) { return '<div class="kv"><span class="k"></span><span class="v" style="font-size:11px;color:var(--text-dim)">网卡: ' + d.interface + '</span></div>'; }).join('')
+    },
+    {
+      num: 3, title: 'TLS / HTTPS 连接',
+      summary: (tls.tls_version || '?') + ' / ' + (tls.cert_cn || '?') + (tls.using_proxy ? ' (代理)' : ''),
+      status: tls.cert_valid ? 'ok' : (tls.tls_version ? 'warn' : 'err'),
+      body: (tls.remote_ip ? '<div class="kv"><span class="k">远端 IP</span><span class="v ip">' + tls.remote_ip + '</span></div>' : '') +
+            (tls.tls_version ? '<div class="kv"><span class="k">TLS 版本</span><span class="v good">' + tls.tls_version + '</span></div>' : '') +
+            (tls.cert_cn ? '<div class="kv"><span class="k">证书 CN</span><span class="v">' + tls.cert_cn + '</span></div>' : '') +
+            (tls.cert_expire ? '<div class="kv"><span class="k">过期时间</span><span class="v">' + tls.cert_expire + '</span></div>' : '') +
+            (tls.cert_valid ? '<div class="kv"><span class="k">证书状态</span><span class="v good">✓ 有效</span></div>' : '') +
+            (tls.connect_time ? '<div class="kv"><span class="k">连接耗时</span><span class="v">' + tls.connect_time + '</span></div>' : '') +
+            (tls.http_code ? '<div class="kv"><span class="k">HTTP 状态</span><span class="v">' + tls.http_code + '</span></div>' : '') +
+            '<div class="kv"><span class="k">代理</span><span class="v ' + (tls.using_proxy ? 'warn' : 'good') + '">' + (tls.using_proxy ? '⚠️ ' + (tls.proxy_address || '检测到代理') : '✓ 未检测到代理') + '</span></div>'
+    },
+    {
+      num: 4, title: '代理 & 隧道检查（仅排查时参考）',
+      summary: [
+        Object.keys(proxy.system_proxy || {}).length > 0 ? '系统代理开' : '',
+        Object.keys(proxy.env_proxy || {}).length > 0 ? '环境变量代理' : '',
+        (proxy.tunnel_interfaces || []).length > 0 ? '隧道: ' + proxy.tunnel_interfaces.join(',') : ''
+      ].filter(Boolean).join(' / ') || '无异常',
+      status: (Object.keys(proxy.system_proxy || {}).length + Object.keys(proxy.env_proxy || {}).length > 0) ? 'warn' : 'ok',
+      body: '<div class="kv"><span class="k">系统代理</span><span class="v">' + (Object.keys(proxy.system_proxy || {}).length > 0 ? '<span class="v warn">' + formatJSON(proxy.system_proxy) + '</span>' : '<span class="v good">未开启</span>') + '</span></div>' +
+            '<div class="kv"><span class="k">环境变量</span><span class="v">' + (Object.keys(proxy.env_proxy || {}).length > 0 ? '<span class="v warn">' + formatJSON(proxy.env_proxy) + '</span>' : '<span class="v good">无</span>') + '</span></div>' +
+            '<div class="kv"><span class="k">隧道网卡</span><span class="v">' + ((proxy.tunnel_interfaces || []).length > 0 ? (proxy.tunnel_interfaces || []).map(function(t) { return '<span class="tag tag-vpn">' + t + '</span>'; }).join(' ') : '<span class="v good">无</span>') + '</span></div>'
+    }
+  ];
+
+  section.innerHTML = steps.map(function(s, i) {
+    return '<div class="step-card" id="stepCard' + i + '">' +
+           '<div class="step-header" onclick="toggleStep(' + i + ')">' +
+           '<span class="step-num ' + s.status + '">' + s.num + '</span>' +
+           '<span class="step-title">' + s.title + '</span>' +
+           '<span class="step-summary">' + s.summary + '</span>' +
+           '<span class="step-arrow">▼</span>' +
+           '</div><div class="step-body">' + s.body + '</div></div>';
+  }).join('');
+
+  // 自动展开有警告的步骤
+  ['local','tls','proxy_tunnel'].forEach(function(key) {
+    var idx = { local: 0, dns: 1, tls: 2, proxy_tunnel: 3 }[key];
+    if (idx !== undefined) {
+      var card = document.getElementById('stepCard' + idx);
+      if (card) {
+        var numEl = card.querySelector('.step-num');
+        if (numEl && numEl.classList.contains('warn')) card.classList.add('open');
+      }
+    }
+  });
+}
+
+function toggleStep(i) {
+  document.getElementById('stepCard' + i).classList.toggle('open');
+}
+
+
+// ── 域名解析链路表格 ──────────────────────────────────────
+
+function renderLinkTable(data) {
+  var section = document.getElementById('linkTableSection');
+  var tbody = document.getElementById('linkTableBody');
+  var cnameArea = document.getElementById('linkCnameArea');
+  var resolution = data.resolution || {};
+  var ipInfo = data.ip_info || {};
+  var routing = data.routing || {};
+
+  var aRecords = resolution.a_records || [];
+  var cnameChain = resolution.cname_chain || [];
+  var domain = resolution.domain || data.domain || '?';
+
+  section.style.display = '';
+
+  if (aRecords.length === 0) {
+    cnameArea.innerHTML = '';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-dim)">⚠️ 未解析到 A 记录</td></tr>';
+    return;
+  }
+
+  // CNAME 链展示
+  var cnameHTML = '<span class="link-cname-label">解析链:</span>';
+  cnameHTML += '<span class="chain-node root">' + domain + '</span>';
+  cnameChain.forEach(function(cn) {
+    cnameHTML += '<span class="chain-arrow">→</span><span class="chain-node">' + cn + '</span>';
+  });
+  cnameHTML += '<span class="chain-arrow">→</span><span style="font-size:11px;color:var(--text-dim)">' + aRecords.length + ' 个 A 记录</span>';
+  cnameArea.innerHTML = cnameHTML;
+
+  // 表格行：每个 IP 一行
+  tbody.innerHTML = aRecords.map(function(ip, i) {
+    var info = ipInfo[ip] || {};
+    var ri = routing[ip] || {};
+    var isp = info.isp || info.netname || '未知';
+    var iface = ri.interface || '?';
+    var isTunnel = ri.is_tunnel === true;
+
+    // ISP 标签颜色
+    var ispClass = 'tag-ip';
+    if (info.isp) {
+      if (['腾讯云','阿里云','AWS','Azure','Cloudflare','GCP'].indexOf(info.isp) >= 0) ispClass = 'tag-cdn';
+      else if (['中国电信','中国联通','中国移动'].indexOf(info.isp) >= 0) ispClass = 'tag-dns';
+    }
+
+    var routeBadge = isTunnel
+      ? '<span class="tag tag-vpn">⚠ 隧道 ' + iface + '</span>'
+      : '<span class="tag tag-gw">✓ 直连 ' + iface + '</span>';
+
+    var statusBadge = isTunnel
+      ? '<span style="color:var(--warn);font-size:12px">⚠ 隧道</span>'
+      : '<span style="color:var(--accent2);font-size:12px">✓ 正常</span>';
+
+    var extra = '';
+    if (info.netname || info.descr) {
+      extra = '<div style="font-size:10px;color:var(--text-dim);margin-top:2px">' +
+              (info.netname || '') + (info.descr ? ' · ' + info.descr : '') + '</div>';
+    }
+
+    return '<tr>' +
+      '<td><span class="hop-num">' + (i + 1) + '</span></td>' +
+      '<td><span class="hop-ip">' + ip + '</span></td>' +
+      '<td><span class="tag ' + ispClass + '">' + isp + '</span>' +
+        (info.country ? '<span style="font-size:11px;color:var(--text-dim);margin-left:4px">' + info.country + '</span>' : '') +
+        extra +
+      '</td>' +
+      '<td>' + routeBadge + '</td>' +
+      '<td>' + statusBadge + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+
+// ── 路由跳转表格 ──────────────────────────────────────────
+
+function renderHopTable(data) {
+  var tr = data.traceroute || {};
+  var hops = tr.hops || [];
+  var tbody = document.getElementById('hopTableBody');
+  var section = document.getElementById('hopTableSection');
+  section.style.display = '';
+
+  if (hops.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-dim)">⚠️ 未获取到跳转数据</td></tr>';
+    return;
+  }
+
+  // 计算总时长（累加所有 hop 的延迟）
+  var totalMs = 0;
+  hops.forEach(function(h) {
+    var m = /([\d.]+)\s*ms/i.exec(h.tms || '');
+    if (m) totalMs += parseFloat(m[1]);
+  });
+
+  // 连接类型：direct=直连 / proxy_direct=代理直连(规则分流) / proxy=代理
+  var proxyMode = tr.proxy_mode || (tr.has_proxy ? 'proxy' : 'direct');
+  var connType, connColor, connBg;
+  if (proxyMode === 'proxy_direct') {
+    connType = '代理直连';
+    connColor = 'var(--accent)';
+    connBg = '#1a2433';
+  } else if (proxyMode === 'proxy' || tr.has_proxy) {
+    connType = '代理';
+    connColor = 'var(--warn)';
+    connBg = '#3a2a0a';
+  } else {
+    connType = '直连';
+    connColor = 'var(--accent2)';
+    connBg = '#1a2e1a';
+  }
+
+  // 更新标题，附加统计信息
+  var titleEl = section.querySelector('h2');
+  titleEl.innerHTML = '🔗 路由跳转列表 (Traceroute)' +
+    '<span style="margin-left:14px;font-size:12px;font-weight:400">' +
+    '<span style="display:inline-block;padding:2px 10px;border-radius:10px;background:' +
+    connBg + ';color:' + connColor + '">' + connType + '</span>' +
+    ' <span style="color:var(--text-dim)">· ' + hops.length + ' 跳</span>' +
+    ' <span style="color:var(--text-dim)">· 总时长</span> ' +
+    '<span style="color:var(--warn);font-family:SF Mono,Monaco,monospace">' + totalMs.toFixed(1) + 'ms</span>' +
+    '</span>';
+
+  // 类型图标
+  function typeIcon(t) {
+    var map = { local: '💻', gateway: '📡', dns: '🌐', cname: '☁', target: '🖥', proxy: '🔄' };
+    return map[t] || '●';
+  }
+
+  function numClass(labelClass) {
+    if (labelClass === 'vpn') return 'timeout';
+    if (labelClass === 'cloud') return 'reached';
+    return '';
+  }
+
+  tbody.innerHTML = hops.map(function(h) {
+    var nc = numClass(h.label_class);
+    return '<tr>' +
+           '<td><span class="hop-num ' + nc + '">' + h.hop + '</span></td>' +
+           '<td style="white-space:nowrap">' +
+           '<span style="margin-right:6px">' + typeIcon(h.type) + '</span>' +
+           '<span style="color:var(--text-bright);font-weight:500">' + h.name + '</span>' +
+           '</td>' +
+           '<td><span class="hop-tms">' + (h.tms || '—') + '</span></td>' +
+           '<td><span class="hop-info" title="' + (h.detail || '').replace(/"/g, '&quot;') + '">' + (h.detail || '—') + '</span></td>' +
+           '<td><span class="hop-tag ' + (h.label_class || '') + '">' + (h.label || '') + '</span></td>' +
+           '</tr>';
+  }).join('');
+}
+
+
+// ── 初始化 ────────────────────────────────────────────────
+
+var data = window.__DETECT_DATA__;
+if (data) {
+  try {
+    if (typeof data === 'string') data = JSON.parse(data);
+    renderTopology(data);
+    renderLinkTable(data);
+    renderHopTable(data);
+    renderSteps(data);
+    document.getElementById('statusDot').className = 'status-dot done';
+    document.getElementById('statusText').textContent = '✓ 检测完成 — ' + data.domain;
+  } catch(e) {
+    document.getElementById('topoEmpty').textContent = '渲染失败: ' + e.message;
+    document.getElementById('statusDot').className = 'status-dot err';
+    document.getElementById('statusText').textContent = '✗ 渲染错误';
+  }
+}
+
+// 表单提交时用 SSE 流式检测
+var STEP_META = [
+  {key: 'local', title: '本机出口/默认路由'},
+  {key: 'dns', title: 'DNS 配置'},
+  {key: 'resolution', title: '域名解析 (dig)'},
+  {key: 'ip_info', title: 'IP 归属 (whois)'},
+  {key: 'routing', title: '路由路径 (route)'},
+  {key: 'tls', title: 'TLS/HTTPS 连接'},
+  {key: 'proxy_tunnel', title: '代理 & 隧道'},
+  {key: 'traceroute', title: '跳转路径重建'},
+];
+
+function startSSEDetect(domain) {
+  var overlay = document.getElementById('loadingOverlay');
+  var btn = document.getElementById('detectBtn');
+  var progDomain = document.getElementById('progDomain');
+  var progBarFill = document.getElementById('progBarFill');
+  var progPercent = document.getElementById('progPercent');
+  var progStepsEl = document.getElementById('progSteps');
+
+  // 初始化进度面板
+  progDomain.textContent = domain;
+  progBarFill.style.width = '0%';
+  progPercent.textContent = '0%';
+  progStepsEl.innerHTML = STEP_META.map(function(s, i) {
+    return '<div class="prog-step" id="progStep' + i + '">' +
+           '<span class="prog-step-icon">' + (i+1) + '</span>' +
+           '<span class="prog-step-text">' + s.title + '</span>' +
+           '<span class="prog-step-time" id="progTime' + i + '"></span>' +
+           '</div>';
+  }).join('');
+
+  overlay.classList.add('show');
+  btn.disabled = true;
+  btn.textContent = '检测中...';
+
+  // 清空旧结果
+  document.getElementById('topoContainer').innerHTML =
+    '<div class="topo-empty blink" id="topoEmpty">⏳ 等待检测完成...</div>';
+  document.getElementById('hopTableSection').style.display = 'none';
+  document.getElementById('linkTableSection').style.display = 'none';
+  document.getElementById('stepsSection').innerHTML = '';
+  document.getElementById('statusDot').className = 'status-dot run';
+  document.getElementById('statusText').textContent = '正在检测 ' + domain + ' ...';
+
+  var stepStartTimes = {};
+
+  var es = new EventSource('/api/detect/stream?domain=' + encodeURIComponent(domain));
+
+  es.addEventListener('progress', function(e) {
+    var d = JSON.parse(e.data);
+    var idx = d.step - 1;
+    stepStartTimes[idx] = Date.now();
+    var el = document.getElementById('progStep' + idx);
+    if (el) el.classList.add('active');
+    // 更新进度条（开始此步时算 50% 进度）
+    var pct = Math.round((idx / d.total) * 100);
+    progBarFill.style.width = pct + '%';
+    progPercent.textContent = pct + '%';
+  });
+
+  es.addEventListener('step_done', function(e) {
+    var d = JSON.parse(e.data);
+    var idx = d.step - 1;
+    var el = document.getElementById('progStep' + idx);
+    if (el) {
+      el.classList.remove('active');
+      el.classList.add(d.status === 'error' ? 'error' : 'done');
+      var icon = el.querySelector('.prog-step-icon');
+      if (icon) icon.textContent = d.status === 'error' ? '✕' : '✓';
+    }
+    var timeEl = document.getElementById('progTime' + idx);
+    if (timeEl && stepStartTimes[idx]) {
+      var elapsed = ((Date.now() - stepStartTimes[idx]) / 1000).toFixed(1);
+      timeEl.textContent = elapsed + 's';
+    }
+    // 更新进度条
+    var pct = Math.round((d.step / d.total) * 100);
+    progBarFill.style.width = pct + '%';
+    progPercent.textContent = pct + '%';
+  });
+
+  es.addEventListener('complete', function(e) {
+    es.close();
+    progBarFill.style.width = '100%';
+    progPercent.textContent = '100%';
+
+    var data = JSON.parse(e.data);
+
+    // 渲染结果
+    try {
+      renderTopology(data);
+      renderLinkTable(data);
+      renderHopTable(data);
+      renderSteps(data);
+      document.getElementById('statusDot').className = 'status-dot done';
+      document.getElementById('statusText').textContent = '✓ 检测完成 — ' + data.domain;
+    } catch(err) {
+      document.getElementById('topoEmpty').textContent = '渲染失败: ' + err.message;
+      document.getElementById('statusDot').className = 'status-dot err';
+      document.getElementById('statusText').textContent = '✗ 渲染错误';
+    }
+
+    // 延迟渐隐，让用户看到 100%
+    setTimeout(function() {
+      overlay.classList.remove('show');
+      btn.disabled = false;
+      btn.textContent = '开始检测';
+    }, 600);
+  });
+
+  es.addEventListener('error', function(e) {
+    if (es.readyState === EventSource.CLOSED) return;
+    es.close();
+    overlay.classList.remove('show');
+    btn.disabled = false;
+    btn.textContent = '开始检测';
+    document.getElementById('statusDot').className = 'status-dot err';
+    document.getElementById('statusText').textContent = '✗ 连接中断';
+    document.getElementById('topoEmpty').textContent = '⚠️ 连接中断，请重试';
+  });
+}
+
+document.getElementById('detectForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var domain = document.getElementById('domainInput').value.trim();
+  if (!domain) { document.getElementById('domainInput').focus(); return; }
+  startSSEDetect(domain);
+});
+</script>
+</body>
+</html>
