@@ -7,6 +7,7 @@
 | 工具 | 目录 | 说明 |
 |------|------|------|
 | net-tracker | [net-tracker/](./net-tracker/) | 网络链路检测工具 — 拓扑可视化 + 跳转路径表格 + 实时检测进度 |
+| net-quality | [net-quality/](./net-quality/) | 网络质量检测工具 — 一键全面体检 + A/B/C/D 量化评分 + 延迟矩阵 |
 | doc-convert | [doc-convert/](./doc-convert/) | 文档格式转换工具 — 基于 pandoc，支持 md/docx/html/epub/pdf 等 12 种格式互转，拖拽上传 + SSE 进度 |
 | epub-convert | [epub-convert/](./epub-convert/) | EPUB 电子书工具 — 格式转换 / 元数据提取 / 图片压缩 / Git 推送 |
 

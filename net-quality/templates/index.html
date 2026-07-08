@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网络质量检测</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg-card: #161b22; --bg-input: #0d1117;
+    --border: #30363d; --border-hover: #58a6ff;
+    --text: #c9d1d9; --text-dim: #8b949e; --text-bright: #f0f6fc;
+    --accent: #58a6ff; --accent2: #3fb950; --warn: #d29922;
+    --danger: #f85149; --purple: #bc8cff; --teal: #39d353;
+    --orange: #f0883e; --pink: #db61a2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.6;
+  }
+  .header {
+    background: var(--bg-card); border-bottom: 1px solid var(--border);
+    padding: 16px 24px; display: flex; align-items: center; gap: 12px;
+  }
+  .header h1 { font-size: 18px; font-weight: 600; color: var(--text-bright); }
+  .header .badge { font-size: 11px; background: #1f2937; color: var(--text-dim); padding: 3px 8px; border-radius: 10px; }
+
+  .main-wrap { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── 输入栏 ── */
+  .input-bar { margin-top: 32px; display: flex; gap: 10px; }
+  .input-bar button {
+    padding: 14px 32px; border-radius: 8px; border: none;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: background .2s;
+  }
+  .input-bar button:hover { background: #4090e0; }
+  .input-bar button:disabled { background: #30363d; cursor: not-allowed; }
+  .hints { font-size: 12px; color: var(--text-dim); margin-top: 10px; margin-bottom: 0; }
+
+  /* ── 弹出式进度卡片 ── */
+  .loading-overlay {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 999;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.4s ease;
+  }
+  .loading-overlay.show { opacity: 1; pointer-events: auto; }
+  .loading-overlay .prog-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 32px;
+    width: 420px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  .prog-title { font-size: 15px; font-weight: 600; color: var(--text-bright); margin-bottom: 14px; text-align: center; }
+  .prog-bar-wrap {
+    width: 100%; height: 6px; background: var(--bg-input); border-radius: 3px;
+    overflow: hidden; margin-bottom: 16px;
+  }
+  .prog-bar-fill {
+    height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 3px; width: 0%; transition: width .4s ease;
+  }
+  .prog-percent { font-size: 12px; color: var(--text-dim); text-align: center; margin-bottom: 14px; }
+  .prog-steps { display: flex; flex-direction: column; gap: 2px; }
+  .prog-step {
+    display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+    border-radius: 6px; font-size: 13px; color: var(--text-dim);
+    transition: all .2s; border: 1px solid transparent;
+  }
+  .prog-step.active {
+    color: var(--text-bright); background: rgba(88,166,255,0.08);
+    border-color: rgba(88,166,255,0.2);
+  }
+  .prog-step.done { color: var(--accent2); }
+  .prog-step.error { color: var(--danger); }
+  .prog-step-icon {
+    width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 10px;
+    border: 1.5px solid var(--border);
+  }
+  .prog-step.active .prog-step-icon { border-color: var(--accent); }
+  .prog-step.done .prog-step-icon { border-color: var(--accent2); background: var(--accent2); color: #0d1117; }
+  .prog-step.error .prog-step-icon { border-color: var(--danger); background: var(--danger); color: #0d1117; }
+  .prog-step-text { flex: 1; }
+  .prog-step-time { font-size: 11px; font-family: "SF Mono", Monaco, monospace; color: var(--text-dim); }
+
+  /* ── 综合评分卡片 ── */
+  .score-card {
+    margin-top: 24px; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px 36px; display: flex; align-items: center; gap: 32px;
+  }
+  .score-grade {
+    width: 100px; height: 100px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 48px; font-weight: 800; flex-shrink: 0;
+  }
+  .score-grade.A { background: #1a3a2a; color: #3fb950; border: 3px solid #3fb950; }
+  .score-grade.B { background: #1a2e3a; color: #58a6ff; border: 3px solid #58a6ff; }
+  .score-grade.C { background: #3a2a0a; color: #d29922; border: 3px solid #d29922; }
+  .score-grade.D { background: #3a1a1a; color: #f85149; border: 3px solid #f85149; }
+  .score-info { flex: 1; }
+  .score-info .score-total { font-size: 24px; font-weight: 700; color: var(--text-bright); }
+  .score-info .score-desc { font-size: 15px; color: var(--text-dim); margin-top: 6px; }
+  .score-detail-grid { display: flex; gap: 16px; margin-top: 14px; flex-wrap: wrap; }
+  .score-item { font-size: 12px; color: var(--text-dim); }
+  .score-item span { color: var(--accent); font-weight: 600; }
+
+  /* ── 关键指标仪表盘 ── */
+  .dashboard { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 20px; }
+  .dash-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 22px 20px; text-align: center;
+  }
+  .dash-card .dash-value {
+    font-size: 32px; font-weight: 700; font-family: "SF Mono", Monaco, monospace;
+  }
+  .dash-card .dash-label { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  .dash-card .dash-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .dash-g { color: var(--accent2); background: #1a2e1a; }
+  .dash-w { color: var(--warn); background: #3a2a0a; }
+  .dash-r { color: var(--danger); background: #3a1a1a; }
+  .dash-b { color: var(--accent); background: #1a2a3a; }
+
+  /* ── 延迟柱状图 ── */
+  .bar-chart-section { margin-top: 20px; }
+  .bar-chart-section h2 { font-size: 14px; font-weight: 500; color: var(--text-dim); margin-bottom: 12px; }
+  .bar-chart-wrap {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px 24px;
+  }
+  .bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .bar-row:last-child { margin-bottom: 0; }
+  .bar-label { width: 110px; font-size: 12px; color: var(--text-dim); text-align: right; flex-shrink: 0; }
+  .bar-label .bar-region { font-size: 10px; color: var(--text-dim); opacity: 0.6; }
+  .bar-track { flex: 1; height: 22px; background: var(--bg-input); border-radius: 4px; overflow: hidden; position: relative; }
+  .bar-fill {
+    height: 100%; border-radius: 4px; transition: width .6s ease;
+    display: flex; align-items: center; padding: 0 8px;
+    font-size: 11px; font-weight: 600; color: var(--text-bright);
+    white-space: nowrap; min-width: 0;
+  }
+  .bar-fill.local { background: linear-gradient(90deg, #3fb950, #2ea043); }
+  .bar-fill.nearby { background: linear-gradient(90deg, #58a6ff, #4090e0); }
+  .bar-fill.far { background: linear-gradient(90deg, #d29922, #b8860b); }
+  .bar-fill.overseas { background: linear-gradient(90deg, #f0883e, #d0702e); }
+  .bar-val {
+    width: 70px; font-size: 12px; font-family: "SF Mono", Monaco, monospace;
+    color: var(--text-bright); text-align: right; flex-shrink: 0;
+  }
+
+  /* ── 分步卡片 ── */
+  .steps-section { margin-top: 20px; margin-bottom: 40px; }
+  .step-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  .step-header {
+    display: flex; align-items: flex-start; gap: 10px; padding: 14px 18px;
+    cursor: pointer; user-select: none; flex-wrap: wrap;
+  }
+  .step-header:hover { background: rgba(255,255,255,0.03); }
+  .step-num {
+    width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .step-num.ok { background: #1a3a2a; color: var(--accent2); }
+  .step-num.warn { background: #3a2a0a; color: var(--warn); }
+  .step-num.err { background: #3a1a1a; color: var(--danger); }
+  .step-title { font-size: 14px; font-weight: 600; color: var(--text-bright); flex-shrink: 0; }
+  .step-summary {
+    font-size: 12px; color: var(--text-dim); margin-left: auto; flex: 1; min-width: 0;
+    text-align: right; white-space: normal; word-break: break-all; line-height: 1.6;
+  }
+  .step-arrow { font-size: 12px; color: var(--text-dim); transition: transform .2s; }
+  .step-card.open .step-arrow { transform: rotate(180deg); }
+  .step-body {
+    display: none; padding: 0 18px 18px; font-size: 13px; border-top: 1px solid var(--border);
+  }
+  .step-card.open .step-body { display: block; }
+
+  .kv { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--text-dim); min-width: 100px; flex-shrink: 0; }
+  .kv .v { color: var(--text); word-break: break-all; }
+  .kv .v.good { color: var(--accent2); }
+  .kv .v.warn { color: var(--warn); }
+  .kv .v.bad { color: var(--danger); }
+
+  .tag { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 10px; margin-right: 4px; margin-bottom: 2px; background: #1f2937; color: var(--text); }
+  .tag-ok { background: #1a3a2a; color: var(--accent2); }
+  .tag-fail { background: #3a1a1a; color: var(--danger); }
+  .tag-warn { background: #3a2a0a; color: var(--warn); }
+  .tag-ip { background: #1a2a3a; color: var(--accent); }
+
+  /* 连通性状态灯 */
+  .conn-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .conn-row:last-child { border-bottom: none; }
+  .conn-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .conn-dot.ok { background: var(--accent2); }
+  .conn-dot.fail { background: var(--danger); }
+  .conn-name { width: 80px; font-size: 13px; color: var(--text); flex-shrink: 0; }
+  .conn-domain { font-size: 12px; color: var(--text-dim); }
+  .conn-time { font-size: 12px; font-family: "SF Mono", Monaco, monospace; color: var(--text-dim); margin-left: auto; }
+
+  /* 接口卡片 */
+  .iface-card {
+    padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg-input); margin-bottom: 8px;
+  }
+  .iface-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .iface-type {
+    font-size: 10px; padding: 1px 7px; border-radius: 4px;
+    background: #1f2937; color: var(--text-dim);
+  }
+  .iface-type.wifi { background: #1a2e3a; color: var(--accent); }
+  .iface-type.eth { background: #1a3a2a; color: var(--accent2); }
+  .iface-type.vpn { background: #3a2a0a; color: var(--warn); }
+  .iface-name { font-weight: 600; color: var(--text-bright); font-size: 13px; }
+  .iface-active { font-size: 10px; padding: 1px 6px; border-radius: 4px; }
+  .iface-active.on { background: #1a3a2a; color: var(--accent2); }
+  .iface-active.off { background: #1f2937; color: var(--text-dim); }
+
+  /* 状态栏 */
+  .status-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg-card);
+    border-top: 1px solid var(--border); padding: 10px 24px;
+    display: flex; align-items: center; gap: 10px; font-size: 12px; z-index: 10;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .status-dot.idle { background: var(--text-dim); }
+  .status-dot.run { background: var(--warn); }
+  .status-dot.done { background: var(--accent2); }
+  .status-dot.err { background: var(--danger); }
+
+  .error-box {
+    margin-top: 24px;
+  }
+  .error-msg {
+    background: #3a1a1a; border: 1px solid var(--danger); border-radius: 8px;
+    padding: 16px 20px; color: var(--danger); font-size: 14px;
+  }
+
+  @media (max-width: 768px) {
+    .dashboard { grid-template-columns: repeat(2, 1fr); }
+    .score-card { flex-direction: column; text-align: center; }
+    .score-detail-grid { justify-content: center; }
+    .bar-label { width: 80px; font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2">
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+  </svg>
+  <h1>网络质量检测</h1>
+  <span class="badge">v1.0</span>
+</div>
+
+<!-- 弹出式进度卡片 -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="prog-panel">
+    <div class="prog-title">📊 正在检测本机网络质量...</div>
+    <div class="prog-bar-wrap"><div class="prog-bar-fill" id="progBarFill"></div></div>
+    <div class="prog-percent" id="progPercent">0%</div>
+    <div class="prog-steps" id="progSteps"></div>
+  </div>
+</div>
+
+<div class="main-wrap">
+  <div class="input-bar">
+    <button type="button" id="detectBtn" onclick="startDetection()">开始全面检测</button>
+  </div>
+  <div class="hints">
+    一键检测本机网络质量 — 接口、延迟、丢包、带宽、DNS、IPv6 全覆盖
+  </div>
+
+  {% if error %}
+  <div class="error-box">
+    <div class="error-msg">✗ {{ error }}</div>
+  </div>
+  {% endif %}
+
+  <!-- 结果区 -->
+  <div id="resultArea">
+    {% if not result %}
+    <div style="text-align:center;padding:60px 20px;color:var(--text-dim);font-size:15px;">
+      👆 点击"开始全面检测"，对本机网络环境进行全面分析
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- 状态栏 -->
+<div class="status-bar">
+  <div class="status-dot {{ 'done' if result else 'idle' }}" id="statusDot"></div>
+  <span id="statusText">{{ '✓ 检测完成' if result else '就绪' }}</span>
+</div>
+
+{% if result %}
+<script>
+window.__DETECT_DATA__ = {{ result | safe }};
+</script>
+{% endif %}
+
+<script>
+// ── SSE 步骤元数据 ────────────────────────────────────────
+var STEP_META = [
+  {key: 'interfaces', title: '网络接口扫描'},
+  {key: 'connectivity', title: '互联网连通性'},
+  {key: 'dns_perf', title: 'DNS 解析性能'},
+  {key: 'latency_matrix', title: '延迟矩阵'},
+  {key: 'packet_loss', title: '丢包率 & 抖动'},
+  {key: 'bandwidth', title: '带宽估算'},
+  {key: 'ipv6', title: 'IPv4/IPv6 双栈'},
+  {key: 'score', title: '综合评分'},
+];
+
+// ── 综合评分卡片 ──────────────────────────────────────────
+function renderScore(score) {
+  if (!score || !score.grade) return '';
+  var grade = score.grade;
+  var tipsHTML = '';
+  if (score.tips && score.tips.length > 0) {
+    tipsHTML = '<div style="margin-top:10px;font-size:12px;color:var(--text-dim)">' +
+      score.tips.map(function(t) { return '<div style="padding:2px 0">💡 ' + t + '</div>'; }).join('') +
+      '</div>';
+  }
+  return '<div class="score-card">' +
+    '<div class="score-grade ' + grade + '">' + grade + '</div>' +
+    '<div class="score-info">' +
+    '<div class="score-total">' + score.total + ' 分</div>' +
+    '<div class="score-desc">' + (score.desc || '') + '</div>' +
+    '<div class="score-detail-grid">' +
+    Object.entries(score.scores || {}).map(function(e) {
+      return '<div class="score-item">' + e[0] + ': <span>' + e[1].toFixed(1) + '</span></div>';
+    }).join('') +
+    '</div>' + tipsHTML +
+    '</div></div>';
+}
+
+// ── 关键指标仪表盘 ────────────────────────────────────────
+function renderDashboard(data) {
+  var lat = data.latency_matrix || {};
+  var pl = data.packet_loss || {};
+  var bw = data.bandwidth || {};
+  var dns = data.dns_perf || {};
+
+  var latVal = lat.overall_avg_ms || '—';
+  var latClass = latVal === '—' ? 'dash-r' : (latVal < 50 ? 'dash-g' : latVal < 150 ? 'dash-b' : latVal < 300 ? 'dash-w' : 'dash-r');
+  var lossVal = pl.loss_pct !== undefined ? pl.loss_pct : '—';
+  var lossClass = lossVal === '—' ? 'dash-r' : (lossVal === 0 ? 'dash-g' : lossVal < 1 ? 'dash-b' : lossVal < 3 ? 'dash-w' : 'dash-r');
+  var bwVal = bw.download_speed_mbps || '—';
+  var bwClass = bwVal === '—' ? 'dash-r' : (bwVal > 50 ? 'dash-g' : bwVal > 20 ? 'dash-b' : bwVal > 5 ? 'dash-w' : 'dash-r');
+  var dnsVal = dns.avg_ms || '—';
+  var dnsClass = dnsVal === '—' ? 'dash-r' : (dnsVal < 30 ? 'dash-g' : dnsVal < 80 ? 'dash-b' : dnsVal < 150 ? 'dash-w' : 'dash-r');
+
+  return '<div class="dashboard">' +
+    '<div class="dash-card"><div class="dash-value ' + latClass + '">' + (typeof latVal === 'number' ? latVal + '<small style="font-size:14px">ms</small>' : '—') + '</div><div class="dash-label">平均延迟</div><div class="dash-sub">越低越好</div></div>' +
+    '<div class="dash-card"><div class="dash-value ' + lossClass + '">' + (typeof lossVal === 'number' ? lossVal + '<small style="font-size:14px">%</small>' : '—') + '</div><div class="dash-label">丢包率</div><div class="dash-sub">0% 为最佳</div></div>' +
+    '<div class="dash-card"><div class="dash-value ' + bwClass + '">' + (typeof bwVal === 'number' ? bwVal + '<small style="font-size:14px">Mbps</small>' : '—') + '</div><div class="dash-label">下载速率</div><div class="dash-sub">估算值</div></div>' +
+    '<div class="dash-card"><div class="dash-value ' + dnsClass + '">' + (typeof dnsVal === 'number' ? dnsVal + '<small style="font-size:14px">ms</small>' : '—') + '</div><div class="dash-label">DNS 延迟</div><div class="dash-sub">解析速度</div></div>' +
+    '</div>';
+}
+
+// ── 延迟柱状图 ────────────────────────────────────────────
+function renderBarChart(latencyMatrix) {
+  var targets = (latencyMatrix && latencyMatrix.targets) || [];
+  if (targets.length === 0) return '';
+
+  var maxMs = Math.max.apply(null, targets.map(function(t) { return t.avg_ms || 0; })) || 500;
+  var barMax = Math.max(maxMs * 1.2, 100);
+
+  function barClass(region) {
+    if (region === '本地') return 'local';
+    if (!region || region === '北京' || region === '上海' || region === '广州') return 'nearby';
+    if (region === '海外') return 'overseas';
+    return 'far';
+  }
+
+  return '<div class="bar-chart-section">' +
+    '<h2>📡 延迟矩阵 (Ping)</h2>' +
+    '<div class="bar-chart-wrap">' +
+    targets.map(function(t) {
+      var pct = Math.min((t.avg_ms || 0) / barMax * 100, 100);
+      var lossInfo = t.loss_pct > 0 ? ' · 丢包 ' + t.loss_pct + '%' : '';
+      return '<div class="bar-row">' +
+        '<div class="bar-label">' + t.label + '<div class="bar-region">' + (t.region || '') + '</div></div>' +
+        '<div class="bar-track"><div class="bar-fill ' + barClass(t.region) + '" style="width:' + pct + '%">' + (pct > 25 ? (t.avg_ms || '?') + 'ms' : '') + '</div></div>' +
+        '<div class="bar-val">' + (t.avg_ms || '?') + 'ms' + lossInfo + '</div>' +
+        '</div>';
+    }).join('') +
+    '</div></div>';
+}
+
+// ── 分步卡片 ──────────────────────────────────────────────
+function renderSteps(data) {
+  var interfaces = data.interfaces || {};
+  var connectivity = data.connectivity || {};
+  var dnsPerf = data.dns_perf || {};
+  var latencyMatrix = data.latency_matrix || {};
+  var packetLoss = data.packet_loss || {};
+  var bandwidth = data.bandwidth || {};
+  var ipv6 = data.ipv6 || {};
+  var score = data.score || {};
+
+  // 辅助
+  function ifaceTypeClass(t) {
+    if (t === 'wifi') return 'wifi'; if (t === 'eth') return 'eth';
+    if (t === 'vpn') return 'vpn'; return '';
+  }
+  var ifaceTypes = {'wifi':'Wi-Fi','eth':'以太网','vpn':'VPN','loopback':'回环','bridge':'桥接','awdl':'AirDrop','other':'其他'};
+
+  var steps = [
+    // 1. 网络接口
+    {
+      num: 1, title: '网络接口扫描',
+      summary: (interfaces.interfaces || []).filter(function(f) { return f.active; }).length + ' 个活跃接口 / 共 ' + (interfaces.total || 0) + ' 个',
+      status: 'ok',
+      body: (interfaces.interfaces || []).map(function(iface) {
+        return '<div class="iface-card">' +
+          '<div class="iface-header">' +
+          '<span class="iface-type ' + ifaceTypeClass(iface.type) + '">' + (ifaceTypes[iface.type] || iface.type) + '</span>' +
+          '<span class="iface-name">' + iface.name + '</span>' +
+          (iface.display_name !== iface.name ? '<span style="font-size:11px;color:var(--text-dim)">(' + iface.display_name + ')</span>' : '') +
+          '<span class="iface-active ' + (iface.active ? 'on' : 'off') + '" style="margin-left:auto">' + (iface.active ? '活跃' : '未激活') + '</span>' +
+          '</div>' +
+          (iface.ipv4 ? '<div style="font-size:12px;color:var(--text-dim)">IPv4: <span class="tag tag-ip">' + iface.ipv4 + '</span> 掩码: ' + (iface.netmask || '?') + '</div>' : '') +
+          (iface.ipv6 ? '<div style="font-size:12px;color:var(--text-dim)">IPv6: ' + iface.ipv6.substring(0, 20) + '...</div>' : '') +
+          (iface.mac ? '<div style="font-size:11px;color:var(--text-dim)">MAC: ' + iface.mac + (iface.mtu ? ' · MTU: ' + iface.mtu : '') + '</div>' : '') +
+          '</div>';
+      }).join('')
+    },
+    // 2. 连通性
+    {
+      num: 2, title: '互联网连通性',
+      summary: (connectivity.reachable_count || 0) + '/5 站点可达',
+      status: (connectivity.reachable_count || 0) >= 4 ? 'ok' : ((connectivity.reachable_count || 0) >= 2 ? 'warn' : 'err'),
+      body: (connectivity.sites || []).map(function(s) {
+        return '<div class="conn-row">' +
+          '<span class="conn-dot ' + (s.reachable ? 'ok' : 'fail') + '"></span>' +
+          '<span class="conn-name">' + s.label + '</span>' +
+          '<span class="conn-domain">' + s.domain + '</span>' +
+          '<span class="conn-time">' + (s.reachable ? 'HTTP ' + s.http_code + ' · ' + s.connect_ms + 'ms' : '不可达') + '</span>' +
+          '</div>';
+      }).join('')
+    },
+    // 3. DNS 性能
+    {
+      num: 3, title: 'DNS 解析性能',
+      summary: '平均 ' + (dnsPerf.avg_ms || '?') + 'ms' + (dnsPerf.results && dnsPerf.results.length > 0 ? ' (DNS: ' + dnsPerf.results[0].dns_server + ')' : ''),
+      status: (dnsPerf.avg_ms || 999) < 100 ? 'ok' : ((dnsPerf.avg_ms || 999) < 200 ? 'warn' : 'err'),
+      body: (dnsPerf.results || []).map(function(r) {
+        var cls = r.query_ms < 0 ? 'bad' : (r.query_ms < 50 ? 'good' : r.query_ms < 150 ? 'warn' : 'bad');
+        return '<div class="kv"><span class="k">' + r.label + '</span><span class="v ' + cls + '">' + (r.query_ms > 0 ? r.query_ms + 'ms' : '失败') + ' <span style="font-size:11px;color:var(--text-dim)">(' + r.domain + ')</span></span></div>';
+      }).join('')
+    },
+    // 4. 延迟矩阵
+    {
+      num: 4, title: '延迟矩阵',
+      summary: '平均 ' + (latencyMatrix.overall_avg_ms || '?') + 'ms，最快 ' + Math.min.apply(null, (latencyMatrix.targets || []).filter(function(t) { return t.avg_ms > 0; }).map(function(t) { return t.avg_ms; }) || [0]) + 'ms',
+      status: (latencyMatrix.overall_avg_ms || 999) < 100 ? 'ok' : ((latencyMatrix.overall_avg_ms || 999) < 300 ? 'warn' : 'err'),
+      body: '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+        '<tr style="color:var(--text-dim);border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px 8px">目标</th><th style="padding:6px 8px">区域</th><th style="padding:6px 8px">平均</th><th style="padding:6px 8px">最小</th><th style="padding:6px 8px">最大</th><th style="padding:6px 8px">抖动</th><th style="padding:6px 8px">丢包</th></tr>' +
+        (latencyMatrix.targets || []).map(function(t) {
+          var cls = t.avg_ms < 30 ? 'good' : t.avg_ms < 100 ? '' : t.avg_ms < 300 ? 'warn' : 'bad';
+          return '<tr style="border-bottom:1px solid var(--border)">' +
+            '<td style="padding:5px 8px;font-family:monospace;color:var(--accent)">' + t.target + '</td>' +
+            '<td style="padding:5px 8px;color:var(--text-dim);font-size:11px">' + (t.region || '') + '</td>' +
+            '<td style="padding:5px 8px;font-weight:600;color:var(--text-bright)">' + (t.avg_ms || '?') + 'ms</td>' +
+            '<td style="padding:5px 8px;color:var(--text-dim)">' + (t.min_ms || '?') + 'ms</td>' +
+            '<td style="padding:5px 8px;color:var(--text-dim)">' + (t.max_ms || '?') + 'ms</td>' +
+            '<td style="padding:5px 8px;color:var(--text-dim)">' + (t.stddev_ms || '?') + 'ms</td>' +
+            '<td style="padding:5px 8px;' + (t.loss_pct > 0 ? 'color:var(--danger)' : 'color:var(--accent2)') + '">' + t.loss_pct + '%</td>' +
+            '</tr>';
+        }).join('') +
+        '</table>'
+    },
+    // 5. 丢包率 & 抖动
+    {
+      num: 5, title: '丢包率 & 抖动 (' + (packetLoss.label || '阿里 DNS') + ')',
+      summary: '丢包 ' + (packetLoss.loss_pct !== undefined ? packetLoss.loss_pct + '%' : '?') + ' · 抖动 ' + (packetLoss.jitter_ms || '?') + 'ms · ' + (packetLoss.received || 0) + '/' + (packetLoss.sent || 0) + ' 收包',
+      status: (packetLoss.loss_pct || 100) === 0 ? 'ok' : ((packetLoss.loss_pct || 100) < 3 ? 'warn' : 'err'),
+      body: '<div class="kv"><span class="k">目标</span><span class="v">' + (packetLoss.target || '?') + ' (' + (packetLoss.label || '') + ')</span></div>' +
+            '<div class="kv"><span class="k">发送/接收</span><span class="v">' + (packetLoss.sent || 0) + ' / ' + (packetLoss.received || 0) + '</span></div>' +
+            '<div class="kv"><span class="k">丢包率</span><span class="v ' + ((packetLoss.loss_pct || 100) === 0 ? 'good' : 'bad') + '">' + (packetLoss.loss_pct !== undefined ? packetLoss.loss_pct + '%' : '?') + '</span></div>' +
+            '<div class="kv"><span class="k">平均延迟</span><span class="v">' + (packetLoss.avg_ms || '?') + 'ms</span></div>' +
+            '<div class="kv"><span class="k">最小/最大</span><span class="v">' + (packetLoss.min_ms || '?') + 'ms / ' + (packetLoss.max_ms || '?') + 'ms</span></div>' +
+            '<div class="kv"><span class="k">抖动 (stddev)</span><span class="v ' + ((packetLoss.jitter_ms || 999) < 10 ? 'good' : 'warn') + '">' + (packetLoss.jitter_ms || '?') + 'ms</span></div>'
+    },
+    // 6. 带宽
+    {
+      num: 6, title: '带宽估算',
+      summary: '下载 ' + (bandwidth.download_speed_mbps || '?') + ' Mbps' + (bandwidth.error ? ' (测速失败)' : ''),
+      status: (bandwidth.download_speed_mbps || 0) > 30 ? 'ok' : ((bandwidth.download_speed_mbps || 0) > 10 ? 'warn' : 'err'),
+      body: '<div class="kv"><span class="k">下载速率</span><span class="v">' + (bandwidth.download_speed_mbps ? '<span class="tag ' + (bandwidth.download_speed_mbps > 50 ? 'tag-ok' : bandwidth.download_speed_mbps > 20 ? 'tag-warn' : 'tag-fail') + '">' + bandwidth.download_speed_mbps + ' Mbps</span>' : '—') + '</span></div>' +
+            '<div class="kv"><span class="k">下载量</span><span class="v">' + (bandwidth.bytes_downloaded ? (bandwidth.bytes_downloaded / 1024 / 1024).toFixed(1) + ' MB' : '—') + '</span></div>' +
+            '<div class="kv"><span class="k">耗时</span><span class="v">' + (bandwidth.time_seconds ? bandwidth.time_seconds + 's' : '—') + '</span></div>' +
+            (bandwidth.url ? '<div class="kv"><span class="k">测速源</span><span class="v" style="font-size:11px;color:var(--text-dim)">' + bandwidth.url + '</span></div>' : '') +
+            (bandwidth.error ? '<div class="kv"><span class="k">备注</span><span class="v" style="color:var(--warn)">测速服务器连接失败，所有备用源不可用</span></div>' : '')
+    },
+    // 7. IPv4/IPv6
+    {
+      num: 7, title: 'IPv4/IPv6 双栈',
+      summary: (ipv6.ipv4_available ? '✓ IPv4' : '✗ IPv4') + ' + ' + (ipv6.ipv6_available ? '✓ IPv6' : '✗ IPv6') + (ipv6.dual_stack ? ' (双栈)' : ''),
+      status: ipv6.dual_stack ? 'ok' : (ipv6.ipv4_available ? 'warn' : 'err'),
+      body: '<div class="kv"><span class="k">IPv4 公网 IP</span><span class="v">' + (ipv6.ipv4_public || '<span class="bad">不可用</span>') + '</span></div>' +
+            '<div class="kv"><span class="k">IPv6 公网 IP</span><span class="v">' + (ipv6.ipv6_public || '<span class="bad">不可用</span>') + '</span></div>' +
+            '<div class="kv"><span class="k">双栈支持</span><span class="v ' + (ipv6.dual_stack ? 'good' : 'warn') + '">' + (ipv6.dual_stack ? '✓ 支持 IPv4 + IPv6' : '✗ 仅 ' + (ipv6.ipv4_available ? 'IPv4' : (ipv6.ipv6_available ? 'IPv6' : '无公网'))) + '</span></div>'
+    },
+    // 8. 综合评分
+    {
+      num: 8, title: '综合评分',
+      summary: '等级 ' + (score.grade || '?') + ' · ' + (score.total || '?') + ' 分 · ' + (score.desc || ''),
+      status: (score.grade === 'A' || score.grade === 'B') ? 'ok' : (score.grade === 'C' ? 'warn' : 'err'),
+      body: '<div class="kv"><span class="k">总分</span><span class="v" style="font-size:18px;font-weight:700;color:' + (score.grade === 'A' ? 'var(--accent2)' : score.grade === 'B' ? 'var(--accent)' : score.grade === 'C' ? 'var(--warn)' : 'var(--danger)') + '">' + score.total + ' / 100</span></div>' +
+            '<div class="kv"><span class="k">等级</span><span class="v" style="font-weight:700">' + score.grade + '</span></div>' +
+            '<div class="kv"><span class="k">评价</span><span class="v">' + score.desc + '</span></div>' +
+            '<div class="kv"><span class="k">各项得分</span><span class="v">' +
+            (score.details || []).map(function(d) { return '<div style="font-size:12px;padding:1px 0">' + d + '</div>'; }).join('') +
+            '</span></div>' +
+            (score.tips && score.tips.length > 0 ?
+              '<div class="kv"><span class="k">优化建议</span><span class="v">' +
+              score.tips.map(function(t) { return '<div style="font-size:12px;padding:1px 0;color:var(--warn)">💡 ' + t + '</div>'; }).join('') +
+              '</span></div>' : '')
+    }
+  ];
+
+  return steps.map(function(s, i) {
+    return '<div class="step-card" id="stepCard' + i + '">' +
+           '<div class="step-header" onclick="toggleStep(' + i + ')">' +
+           '<span class="step-num ' + s.status + '">' + s.num + '</span>' +
+           '<span class="step-title">' + s.title + '</span>' +
+           '<span class="step-summary">' + s.summary + '</span>' +
+           '<span class="step-arrow">▼</span>' +
+           '</div><div class="step-body">' + s.body + '</div></div>';
+  }).join('');
+}
+
+function toggleStep(i) {
+  document.getElementById('stepCard' + i).classList.toggle('open');
+}
+
+// ── 渲染全部 ──────────────────────────────────────────────
+function renderAll(data) {
+  var area = document.getElementById('resultArea');
+  var score = data.score || {};
+  var html = renderScore(score);
+  html += renderDashboard(data);
+  html += renderBarChart(data.latency_matrix);
+  html += '<div class="steps-section">' + renderSteps(data) + '</div>';
+  area.innerHTML = html;
+
+  // 自动展开有问题的卡片
+  if (score.grade === 'C' || score.grade === 'D') {
+    [1, 2, 4, 7].forEach(function(i) { // 连通性、延迟、丢包、双栈
+      var card = document.getElementById('stepCard' + i);
+      if (card) {
+        var numEl = card.querySelector('.step-num');
+        if (numEl && (numEl.classList.contains('warn') || numEl.classList.contains('err'))) {
+          card.classList.add('open');
+        }
+      }
+    });
+  }
+}
+
+// ── SSE 检测 ──────────────────────────────────────────────
+function startDetection() {
+  var overlay = document.getElementById('loadingOverlay');
+  var btn = document.getElementById('detectBtn');
+  var progBarFill = document.getElementById('progBarFill');
+  var progPercent = document.getElementById('progPercent');
+  var progStepsEl = document.getElementById('progSteps');
+
+  progBarFill.style.width = '0%';
+  progPercent.textContent = '0%';
+  progStepsEl.innerHTML = STEP_META.map(function(s, i) {
+    return '<div class="prog-step" id="progStep' + i + '">' +
+           '<span class="prog-step-icon">' + (i+1) + '</span>' +
+           '<span class="prog-step-text">' + s.title + '</span>' +
+           '<span class="prog-step-time" id="progTime' + i + '"></span>' +
+           '</div>';
+  }).join('');
+
+  overlay.classList.add('show');
+  btn.disabled = true;
+  btn.textContent = '检测中...';
+  document.getElementById('resultArea').innerHTML = '<div style="text-align:center;padding:60px;color:var(--text-dim)">⏳ 正在检测，请稍候...</div>';
+  document.getElementById('statusDot').className = 'status-dot run';
+  document.getElementById('statusText').textContent = '正在检测网络质量...';
+
+  var stepStartTimes = {};
+  var es = new EventSource('/api/detect/stream');
+
+  es.addEventListener('progress', function(e) {
+    var d = JSON.parse(e.data);
+    var idx = d.step - 1;
+    stepStartTimes[idx] = Date.now();
+    var el = document.getElementById('progStep' + idx);
+    if (el) el.classList.add('active');
+    var pct = Math.round((idx / d.total) * 100);
+    progBarFill.style.width = pct + '%';
+    progPercent.textContent = pct + '%';
+  });
+
+  es.addEventListener('step_done', function(e) {
+    var d = JSON.parse(e.data);
+    var idx = d.step - 1;
+    var el = document.getElementById('progStep' + idx);
+    if (el) {
+      el.classList.remove('active');
+      el.classList.add(d.status === 'error' ? 'error' : 'done');
+      var icon = el.querySelector('.prog-step-icon');
+      if (icon) icon.textContent = d.status === 'error' ? '✕' : '✓';
+    }
+    var timeEl = document.getElementById('progTime' + idx);
+    if (timeEl && stepStartTimes[idx]) {
+      timeEl.textContent = ((Date.now() - stepStartTimes[idx]) / 1000).toFixed(1) + 's';
+    }
+    var pct = Math.round((d.step / d.total) * 100);
+    progBarFill.style.width = pct + '%';
+    progPercent.textContent = pct + '%';
+  });
+
+  es.addEventListener('complete', function(e) {
+    es.close();
+    progBarFill.style.width = '100%';
+    progPercent.textContent = '100%';
+
+    var data = JSON.parse(e.data);
+    try {
+      renderAll(data);
+      document.getElementById('statusDot').className = 'status-dot done';
+      var score = data.score || {};
+      document.getElementById('statusText').textContent = '✓ 检测完成 — 等级 ' + (score.grade || '?') + ' · ' + (score.total || '?') + ' 分';
+    } catch(err) {
+      document.getElementById('resultArea').innerHTML = '<div class="error-msg">渲染失败: ' + err.message + '</div>';
+      document.getElementById('statusDot').className = 'status-dot err';
+      document.getElementById('statusText').textContent = '✗ 渲染错误';
+    }
+
+    setTimeout(function() {
+      overlay.classList.remove('show');
+      btn.disabled = false;
+      btn.textContent = '开始全面检测';
+    }, 600);
+  });
+
+  es.addEventListener('error', function(e) {
+    if (es.readyState === EventSource.CLOSED) return;
+    es.close();
+    overlay.classList.remove('show');
+    btn.disabled = false;
+    btn.textContent = '开始全面检测';
+    document.getElementById('statusDot').className = 'status-dot err';
+    document.getElementById('statusText').textContent = '✗ 连接中断';
+  });
+}
+
+// ── 初始化 ────────────────────────────────────────────────
+var data = window.__DETECT_DATA__;
+if (data) {
+  try {
+    if (typeof data === 'string') data = JSON.parse(data);
+    renderAll(data);
+    document.getElementById('statusDot').className = 'status-dot done';
+    var score = data.score || {};
+    document.getElementById('statusText').textContent = '✓ 检测完成 — 等级 ' + (score.grade || '?') + ' · ' + (score.total || '?') + ' 分';
+  } catch(e) {
+    document.getElementById('resultArea').innerHTML = '<div class="error-msg">渲染失败: ' + e.message + '</div>';
+    document.getElementById('statusDot').className = 'status-dot err';
+    document.getElementById('statusText').textContent = '✗ 渲染错误';
+  }
+}
+</script>
+</body>
+</html>
