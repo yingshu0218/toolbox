@@ -5,3 +5,5 @@ venv/
 .env
 *.log
 .workbuddy/
+toolbox-settings.json
+

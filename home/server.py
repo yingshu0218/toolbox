@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Toolbox 首页管理服务 — 整合部署入口。
 
-单端口 (:5000) 承载所有子模块:
+单端口承载所有子模块:
 - 各子模块通过 DispatcherMiddleware 挂载到 /<module_id>/ 子路径
 - 子模块模板通过 config['URL_PREFIX'] 获取前缀, 适配单端口
 
 功能:
 - 扫描 module.json 自动发现并挂载模块
 - 首页卡片展示 (标题 + 一句话介绍 + 版本号 + 更新角标)
-- 版本检测: 拉取 GitHub raw module.json 对比语义化版本
+- 版本检测: 拉取远程 module.json 对比语义化版本 (支持 github/gitee/gitea)
 - 远程新模块发现: 调用 Contents API 检测远程有而本地无的模块目录
+- 全局导航栏: /api/navbar.js 子模块页面注入左上角导航
+- 设置: /api/settings 切换 git 仓库源
 """
 
 import os
@@ -20,7 +22,7 @@ import importlib.util
 import urllib.request
 import urllib.error
 from pathlib import Path
-from flask import Flask, request, jsonify, render_template, redirect
+from flask import Flask, request, jsonify, render_template, redirect, Response
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 from werkzeug.serving import run_simple
 
@@ -35,13 +37,57 @@ GITHUB_BRANCH = os.environ.get('TOOLBOX_BRANCH', 'main')
 _remote_cache = {}  # key -> (timestamp, data)
 CACHE_TTL = 300  # 5 分钟
 
+SETTINGS_FILE = ROOT / 'toolbox-settings.json'
+DEFAULT_SETTINGS = {
+    'repo_type': 'github',
+    'repo': GITHUB_REPO,
+    'branch': GITHUB_BRANCH,
+    'gitea_base': '',
+}
+
+
+def load_settings():
+    if SETTINGS_FILE.exists():
+        try:
+            s = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
+            for k, v in DEFAULT_SETTINGS.items():
+                s.setdefault(k, v)
+            return s
+        except Exception:
+            pass
+    return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(s):
+    SETTINGS_FILE.write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def get_repo_urls():
+    """根据设置返回 raw/api URL 基础。"""
+    s = load_settings()
+    rtype = s.get('repo_type', 'github')
+    repo = s.get('repo', GITHUB_REPO)
+    branch = s.get('branch', GITHUB_BRANCH)
+    if rtype == 'gitee':
+        return {'raw': f'https://gitee.com/{repo}/raw/{branch}',
+                'api': f'https://gitee.com/api/v5/repos/{repo}/contents',
+                'branch': branch}
+    if rtype == 'gitea':
+        base = s.get('gitea_base', '').rstrip('/')
+        return {'raw': f'{base}/{repo}/raw/branch/{branch}',
+                'api': f'{base}/api/v1/repos/{repo}/contents',
+                'branch': branch}
+    return {'raw': f'https://raw.githubusercontent.com/{repo}/{branch}',
+            'api': f'https://api.github.com/repos/{repo}/contents',
+            'branch': branch}
+
 
 # ── 模块扫描与加载 ───────────────────────────────────────────────
 
 def scan_modules():
     """扫描根目录下所有含 module.json + server.py 的子目录。"""
     modules = []
-    skip = {'home', '__pycache__', 'node_modules', 'venv', '.git'}
+    skip = {'home', '__pycache__', 'node_modules', 'venv', '.git', 'site-packages'}
     for d in sorted(ROOT.iterdir()):
         if not d.is_dir() or d.name.startswith('.') or d.name in skip:
             continue
@@ -62,7 +108,6 @@ def scan_modules():
 
 
 def module_entry(module_dir):
-    """读取 module.json 的 entry 字段, 默认 server.py。"""
     mf = module_dir / 'module.json'
     if mf.exists():
         try:
@@ -73,14 +118,13 @@ def module_entry(module_dir):
 
 
 def load_subapp(module_info):
-    """动态加载子模块的 Flask app 并设置 URL_PREFIX。"""
     module_dir = Path(module_info['_path'])
     entry = module_info.get('entry', 'server.py')
     mod_path = module_dir / entry
     mod_name = f"toolbox_{module_info['id'].replace('-', '_')}"
     spec = importlib.util.spec_from_file_location(mod_name, mod_path)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[mod_name] = mod  # 注册到 sys.modules, 让 Flask 正确推断 root_path
+    sys.modules[mod_name] = mod
     sys.path.insert(0, str(module_dir))
     try:
         spec.loader.exec_module(mod)
@@ -95,7 +139,6 @@ def load_subapp(module_info):
     return sub_app, prefix
 
 
-# 启动时扫描并挂载
 modules = scan_modules()
 _mounted = {}
 for m in modules:
@@ -121,19 +164,19 @@ def parse_version(v):
 
 
 def fetch_remote_json(path):
-    """从 GitHub raw 拉取 JSON 文件。"""
-    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/{path}"
+    urls = get_repo_urls()
+    url = f"{urls['raw']}/{path}"
     req = urllib.request.Request(url, headers={'User-Agent': 'toolbox-home'})
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read().decode('utf-8'))
 
 
-def fetch_github_root_dirs():
-    """调用 GitHub Contents API 获取仓库根目录的目录列表。"""
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/?ref={GITHUB_BRANCH}"
+def fetch_remote_root_dirs():
+    urls = get_repo_urls()
+    url = f"{urls['api']}/?ref={urls['branch']}"
     req = urllib.request.Request(url, headers={
         'User-Agent': 'toolbox-home',
-        'Accept': 'application/vnd.github+json',
+        'Accept': 'application/vnd.github+json, application/json',
     })
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode('utf-8'))
@@ -171,7 +214,6 @@ def index():
 
 @app.route('/api/modules')
 def api_modules():
-    """返回本地模块列表 (含挂载状态)。"""
     result = []
     for m in modules:
         d = {k: v for k, v in m.items() if not k.startswith('_')}
@@ -185,7 +227,6 @@ def api_modules():
 
 @app.route('/api/check-updates')
 def api_check_updates():
-    """对比本地与远程版本号。?force=1 跳过缓存。"""
     force = request.args.get('force') == '1'
     results = []
     for m in modules:
@@ -221,19 +262,18 @@ def api_check_updates():
 
 @app.route('/api/check-remote')
 def api_check_remote():
-    """检测远程仓库有而本地无的模块目录。?force=1 跳过缓存。"""
     force = request.args.get('force') == '1'
     local_ids = {m['id'] for m in modules}
     if force:
         _remote_cache.pop('remote_dirs', None)
 
     def fetcher():
-        return fetch_github_root_dirs()
+        return fetch_remote_root_dirs()
 
     dirs = get_cached('remote_dirs', fetcher)
     if isinstance(dirs, dict) and 'error' in dirs:
         return jsonify(dirs)
-    skip = {'home', '.git', '.github', '.workbuddy', 'node_modules', '__pycache__'}
+    skip = {'home', '.git', '.github', '.workbuddy', 'node_modules', '__pycache__', 'site-packages'}
     remote_only = [d for d in dirs if d not in local_ids
                    and d not in skip and not d.startswith('.')]
     return jsonify({
@@ -241,6 +281,50 @@ def api_check_remote():
         'local_ids': sorted(local_ids),
         'checked_at': time.time(),
     })
+
+
+@app.route('/api/settings', methods=['GET', 'POST'])
+def api_settings():
+    """GET 返回当前设置; POST 更新设置 (repo_type/repo/branch/gitea_base)。"""
+    if request.method == 'POST':
+        data = request.get_json(force=True)
+        s = load_settings()
+        for k in ('repo_type', 'repo', 'branch', 'gitea_base'):
+            if k in data:
+                s[k] = data[k]
+        save_settings(s)
+        _remote_cache.clear()
+        return jsonify({'ok': True, 'settings': s})
+    return jsonify(load_settings())
+
+
+@app.route('/api/navbar.js')
+def api_navbar_js():
+    """返回导航栏 JS, 子模块页面注入左上角导航 (返回首页 + 模块切换下拉)。"""
+    return Response(NAVBAR_JS, mimetype='application/javascript')
+
+
+NAVBAR_JS = r"""(function(){
+  if(document.getElementById('tb-nav'))return;
+  var st=document.createElement('style');
+  st.textContent='#tb-nav{position:fixed;left:20px;top:66px;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,sans-serif}#tb-nav .tb-btn{display:inline-flex;align-items:center;gap:6px;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:9px 14px;color:#c9d1d9;text-decoration:none;font-size:13px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.3);transition:border-color .15s,color .15s}#tb-nav .tb-btn:hover{border-color:#58a6ff;color:#58a6ff}#tb-nav .tb-menu{display:none;position:absolute;top:calc(100% + 6px);left:0;min-width:200px;background:#161b22;border:1px solid #30363d;border-radius:10px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.4)}#tb-nav.open .tb-menu{display:block}#tb-nav .tb-item{display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:13px;color:#c9d1d9;text-decoration:none;cursor:pointer}#tb-nav .tb-item:hover{background:rgba(88,166,255,.1);color:#58a6ff}#tb-nav .tb-st{margin-left:auto;font-size:11px}#tb-nav .tb-st.on{color:#3fb950}#tb-nav .tb-st.off{color:#f85149}#tb-nav .tb-div{height:1px;background:#30363d}';
+  document.head.appendChild(st);
+  var nav=document.createElement('div');
+  nav.id='tb-nav';
+  nav.innerHTML='<a class="tb-btn" href="/"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.78 1.22a.75.75 0 0 0-1.06 0L1.22 6.72a.75.75 0 0 0 0 1.06l5.5 5.5a.75.75 0 0 0 1.06-1.06L3.06 8H12.5A1.5 1.5 0 0 1 14 9.5v3.75a.75.75 0 0 0 1.5 0V9.5a3 3 0 0 0-3-3H3.06l4.72-4.72a.75.75 0 0 0 0-1.06z"/></svg>首页</a><button class="tb-btn" id="tb-sw">模块切换 <span style="font-size:10px">▾</span></button><div class="tb-menu" id="tb-menu"></div>';
+  document.body.appendChild(nav);
+  fetch('/api/modules').then(function(r){return r.json()}).then(function(d){
+    var h='<a class="tb-item" href="/"><span style="width:8px;height:8px;border-radius:50%;background:#58a6ff"></span>首页</a><div class="tb-div"></div>';
+    d.modules.forEach(function(m){
+      var c={'网络工具':'#58a6ff','文档工具':'#3fb950','系统工具':'#f0883e','开发工具':'#bc8cff'}[m.category]||'#bc8cff';
+      h+='<a class="tb-item" href="'+m.url+'"><span style="width:8px;height:8px;border-radius:50%;background:'+c+'"></span>'+m.name+'<span class="tb-st '+(m.mounted?'on':'off')+'">'+(m.mounted?'已安装':'未安装')+'</span></a>';
+    });
+    document.getElementById('tb-menu').innerHTML=h;
+  }).catch(function(){});
+  document.getElementById('tb-sw').onclick=function(e){e.stopPropagation();nav.classList.toggle('open')};
+  document.addEventListener('click',function(e){if(!e.target.closest('#tb-nav'))nav.classList.remove('open')});
+})();
+"""
 
 
 # ── WSGI 挂载 ───────────────────────────────────────────────────

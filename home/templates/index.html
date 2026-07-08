@@ -183,6 +183,10 @@
     <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
     检测更新
   </button>
+  <button class="refresh-btn" onclick="openSettings()">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/><path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/></svg>
+    设置
+  </button>
 </div>
 
 <div class="notice" id="remoteNotice" style="display:none"></div>
@@ -355,6 +359,58 @@ document.addEventListener('click', (e) => {
 });
 
 init();
+</script>
+
+<div id="settingsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;width:420px;max-width:90vw">
+    <h3 style="font-size:15px;color:#f0f6fc;margin-bottom:16px">设置 — Git 仓库源</h3>
+    <label style="display:block;font-size:12px;color:#8b949e;margin-bottom:4px">仓库类型</label>
+    <select id="setRepoType" style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#c9d1d9;font-size:13px;margin-bottom:12px">
+      <option value="github">GitHub</option>
+      <option value="gitee">Gitee</option>
+      <option value="gitea">Gitea (自建)</option>
+    </select>
+    <label style="display:block;font-size:12px;color:#8b949e;margin-bottom:4px">仓库 (owner/repo)</label>
+    <input id="setRepo" placeholder="yingshu0218/toolbox" style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#c9d1d9;font-size:13px;margin-bottom:12px">
+    <label style="display:block;font-size:12px;color:#8b949e;margin-bottom:4px">分支</label>
+    <input id="setBranch" placeholder="main" style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#c9d1d9;font-size:13px;margin-bottom:12px">
+    <div id="giteaField" style="display:none">
+      <label style="display:block;font-size:12px;color:#8b949e;margin-bottom:4px">Gitea 地址</label>
+      <input id="setGiteaBase" placeholder="https://gitea.example.com" style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#c9d1d9;font-size:13px;margin-bottom:12px">
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+      <button onclick="closeSettings()" style="padding:8px 16px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#8b949e;font-size:13px;cursor:pointer">取消</button>
+      <button onclick="saveSettingsForm()" style="padding:8px 16px;border-radius:6px;border:none;background:#1f6feb;color:#fff;font-size:13px;cursor:pointer">保存</button>
+    </div>
+  </div>
+</div>
+<script>
+async function openSettings(){
+  const r = await fetch('/api/settings');
+  const s = await r.json();
+  document.getElementById('setRepoType').value = s.repo_type||'github';
+  document.getElementById('setRepo').value = s.repo||'';
+  document.getElementById('setBranch').value = s.branch||'main';
+  document.getElementById('setGiteaBase').value = s.gitea_base||'';
+  toggleGitea();
+  document.getElementById('settingsModal').style.display='flex';
+}
+function toggleGitea(){
+  document.getElementById('giteaField').style.display = document.getElementById('setRepoType').value==='gitea'?'block':'none';
+}
+document.getElementById('setRepoType').onchange = toggleGitea;
+function closeSettings(){document.getElementById('settingsModal').style.display='none'}
+async function saveSettingsForm(){
+  const body = {
+    repo_type: document.getElementById('setRepoType').value,
+    repo: document.getElementById('setRepo').value.trim(),
+    branch: document.getElementById('setBranch').value.trim()||'main',
+    gitea_base: document.getElementById('setGiteaBase').value.trim(),
+  };
+  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  closeSettings();
+  checkAll(true);
+}
 </script>
 </body>
 </html>
