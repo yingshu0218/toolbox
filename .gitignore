@@ -6,4 +6,5 @@ venv/
 *.log
 .workbuddy/
 toolbox-settings.json
+toolbox.pid
 

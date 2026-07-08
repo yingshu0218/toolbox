@@ -1,36 +1,50 @@
 #!/usr/bin/env bash
-# Toolbox 启动命令 — 启动 home 服务并自动打开浏览器
-# 环境变量 (由 formula/installer 注入, 开发时用默认值):
-#   TOOLBOX_PYTHON  Python 解释器路径 (默认: python3)
-#   TOOLBOX_ROOT    安装/仓库根目录     (默认: 脚本上一级)
-#   TOOLBOX_PORT    服务端口           (默认: 9053)
+# Toolbox 启动命令 — 后台启动服务并打开浏览器
+# 子命令: stop (停止) | status (状态) | 无参数 (启动)
+# 后台运行, 关闭终端不影响
 set -u
 
 PY="${TOOLBOX_PYTHON:-python3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${TOOLBOX_ROOT:-$SCRIPT_DIR/..}"
 PORT="${TOOLBOX_PORT:-9053}"
+PID_FILE="$ROOT/toolbox.pid"
+LOG_FILE="/tmp/toolbox.log"
 
+if [ "${1:-}" = "stop" ]; then
+  if [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "Toolbox 已停止"
+  else
+    echo "Toolbox 未运行"
+  fi
+  rm -f "$PID_FILE"; exit 0
+fi
+
+if [ "${1:-}" = "status" ]; then
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "Toolbox 运行中 (PID: $(cat "$PID_FILE")) → http://localhost:${PORT}"
+  else
+    echo "Toolbox 未运行"
+  fi
+  exit 0
+fi
+
+if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+  echo "Toolbox 已在运行 → http://localhost:${PORT}"
+  open "http://localhost:${PORT}/" 2>/dev/null; exit 0
+fi
+
+export TOOLBOX_PORT="$PORT"
 echo "🏠 Toolbox 启动中 → http://localhost:${PORT}"
-"$PY" "$ROOT/home/server.py" &
-SERVER_PID=$!
+nohup "$PY" "$ROOT/home/server.py" >"$LOG_FILE" 2>&1 &
+echo $! > "$PID_FILE"
+echo "   PID: $(cat "$PID_FILE") | 日志: $LOG_FILE"
+echo "   停止: toolbox stop | 状态: toolbox status"
 
-cleanup() {
-  [ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
-
-# 轮询端口就绪, 然后打开浏览器
 for i in $(seq 1 60); do
   if curl -sf "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
-    if command -v open >/dev/null 2>&1; then
-      open "http://localhost:${PORT}/"
-    elif command -v xdg-open >/dev/null 2>&1; then
-      xdg-open "http://localhost:${PORT}/"
-    fi
+    open "http://localhost:${PORT}/" 2>/dev/null || xdg-open "http://localhost:${PORT}/" 2>/dev/null
     break
   fi
   sleep 0.5
 done
-
-wait "$SERVER_PID"
