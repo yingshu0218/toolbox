@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Toolbox 启动命令 — 启动 home 服务并自动打开浏览器
+# 环境变量 (由 formula/installer 注入, 开发时用默认值):
+#   TOOLBOX_PYTHON  Python 解释器路径 (默认: python3)
+#   TOOLBOX_ROOT    安装/仓库根目录     (默认: 脚本上一级)
+#   TOOLBOX_PORT    服务端口           (默认: 5001)
+set -u
+
+PY="${TOOLBOX_PYTHON:-python3}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${TOOLBOX_ROOT:-$SCRIPT_DIR/..}"
+PORT="${TOOLBOX_PORT:-5001}"
+
+echo "🏠 Toolbox 启动中 → http://localhost:${PORT}"
+"$PY" "$ROOT/home/server.py" &
+SERVER_PID=$!
+
+cleanup() {
+  [ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+# 轮询端口就绪, 然后打开浏览器
+for i in $(seq 1 60); do
+  if curl -sf "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
+    if command -v open >/dev/null 2>&1; then
+      open "http://localhost:${PORT}/"
+    elif command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "http://localhost:${PORT}/"
+    fi
+    break
+  fi
+  sleep 0.5
+done
+
+wait "$SERVER_PID"

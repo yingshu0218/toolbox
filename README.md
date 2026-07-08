@@ -20,6 +20,30 @@
 - 拖拽上传 + 卡片式文件队列 + 进度遮罩面板
 - 单文件 `server.py` + `templates/index.html`
 
+## 安装
+
+### macOS (Homebrew)
+
+```bash
+brew tap yingshu0218/toolbox
+brew install toolbox
+toolbox          # 启动 → 自动打开浏览器 http://localhost:5001
+```
+
+### Windows (Scoop)
+
+```powershell
+scoop bucket add toolbox https://github.com/yingshu0218/scoop-toolbox
+scoop install toolbox
+toolbox          # 启动 → 自动打开浏览器
+```
+
+依赖说明：pandoc（doc/epub 转换必需，brew/scoop 会自动安装）、git（epub 推送，系统自带或 `scoop install git`）、LaTeX（PDF 输出可选）。
+
+### 源码部署
+
+clone 仓库后 `./start-all.sh` 启动，详见下方「整合部署」。
+
 ## 整合部署
 
 首页服务 `home/` 作为整合入口，单端口（`:5001`，避开 macOS AirPlay 占用的 5000）承载所有子模块：

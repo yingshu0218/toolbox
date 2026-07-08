@@ -27,7 +27,7 @@ from werkzeug.serving import run_simple
 app = Flask(__name__)
 app.config['URL_PREFIX'] = ''
 
-PORT = 5001
+PORT = int(os.environ.get('TOOLBOX_PORT', '5001'))
 ROOT = Path(__file__).resolve().parent.parent  # toolbox/
 GITHUB_REPO = os.environ.get('TOOLBOX_REPO', 'yingshu0218/toolbox')
 GITHUB_BRANCH = os.environ.get('TOOLBOX_BRANCH', 'main')
