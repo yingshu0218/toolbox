@@ -27,7 +27,7 @@
 ```bash
 brew tap yingshu0218/toolbox
 brew install toolbox
-toolbox          # 启动 → 自动打开浏览器 http://localhost:5001
+toolbox          # 启动 → 自动打开浏览器 http://localhost:9053
 ```
 
 ### Windows (Scoop)
@@ -46,11 +46,11 @@ clone 仓库后 `./start-all.sh` 启动，详见下方「整合部署」。
 
 ## 整合部署
 
-首页服务 `home/` 作为整合入口，单端口（`:5001`，避开 macOS AirPlay 占用的 5000）承载所有子模块：
+首页服务 `home/` 作为整合入口，单端口（`:9053`，避开 macOS AirPlay 占用的 5000）承载所有子模块：
 
 ```bash
 ./start-all.sh
-# 访问 http://localhost:5001
+# 访问 http://localhost:9053
 ```
 
 home 启动时自动扫描仓库中含 `module.json` 的子目录，通过 `DispatcherMiddleware` 挂载到 `/<模块id>/` 子路径。新增模块只需创建含 `module.json` 的目录，重启即自动识别。

@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 if "%TOOLBOX_PYTHON%"=="" set "TOOLBOX_PYTHON=python"
-if "%TOOLBOX_PORT%"=="" set "TOOLBOX_PORT=5001"
+if "%TOOLBOX_PORT%"=="" set "TOOLBOX_PORT=9053"
 set "SCRIPT_DIR=%~dp0"
 if "%TOOLBOX_ROOT%"=="" (
   set "ROOT=%SCRIPT_DIR%.."
