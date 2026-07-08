@@ -1,0 +1,9 @@
+{
+  "id": "net-quality",
+  "name": "网络质量检测",
+  "description": "一键全面体检 + A/B/C/D 量化评分 + 延迟矩阵",
+  "version": "1.0.0",
+  "category": "网络工具",
+  "port": 5098,
+  "entry": "server.py"
+}

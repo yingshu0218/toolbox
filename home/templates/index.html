@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Toolbox</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg-card: #161b22; --bg-input: #0d1117;
+    --border: #30363d; --border-hover: #58a6ff;
+    --text: #c9d1d9; --text-dim: #8b949e; --text-bright: #f0f6fc;
+    --accent: #58a6ff; --accent2: #3fb950; --warn: #d29922;
+    --danger: #f85149; --purple: #bc8cff; --teal: #39d353;
+    --orange: #f0883e; --pink: #db61a2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.6;
+  }
+
+  /* ── header ── */
+  .header {
+    background: var(--bg-card); border-bottom: 1px solid var(--border);
+    padding: 14px 24px; display: flex; align-items: center; gap: 14px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .header .logo {
+    width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+    background: linear-gradient(135deg, #1f6feb, #58a6ff);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 800; color: #fff;
+  }
+  .header h1 { font-size: 18px; font-weight: 600; color: var(--text-bright); }
+  .header .spacer { flex: 1; }
+  .stat-pill {
+    font-size: 12px; padding: 5px 12px; border-radius: 16px;
+    background: #1f2937; color: var(--text-dim); display: inline-flex;
+    align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .stat-pill .num { font-weight: 700; color: var(--text-bright); font-family: "SF Mono", Monaco, monospace; }
+  .stat-pill.warn { background: #3a2a0a; color: var(--warn); }
+  .stat-pill.warn .num { color: var(--warn); }
+  .stat-pill.ok { background: #1a2e1a; color: var(--accent2); }
+  .refresh-btn {
+    font-size: 12px; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg-input); color: var(--text-dim);
+    transition: all .15s; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .refresh-btn:active { transform: scale(.97); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .refresh-btn.loading svg { animation: spin .8s linear infinite; }
+
+  /* ── notice bar ── */
+  .notice {
+    max-width: 960px; margin: 16px auto 0; padding: 0 24px;
+  }
+  .notice-bar {
+    background: #3a2a0a; border: 1px solid #5a3f0a; border-radius: 10px;
+    padding: 12px 18px; display: flex; align-items: center; gap: 10px;
+    font-size: 13px; color: var(--warn);
+  }
+  .notice-bar .close { margin-left: auto; cursor: pointer; color: var(--text-dim); font-size: 16px; }
+  .notice-bar .close:hover { color: var(--text-bright); }
+
+  /* ── main grid ── */
+  .main {
+    max-width: 960px; margin: 0 auto; padding: 32px 24px 100px;
+  }
+  .section-title {
+    font-size: 13px; font-weight: 500; color: var(--text-dim);
+    margin-bottom: 18px; letter-spacing: .3px;
+  }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  /* ── card ── */
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 22px; cursor: pointer; transition: all .2s ease;
+    position: relative; overflow: hidden; text-decoration: none; color: inherit;
+    display: flex; flex-direction: column;
+  }
+  .card:hover { border-color: var(--border-hover); transform: translateY(-3px); }
+  .card-top { display: flex; align-items: flex-start; gap: 14px; }
+  .card-icon {
+    width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 700;
+  }
+  .card-icon.blue { background: #0d2533; color: var(--accent); }
+  .card-icon.green { background: #0d3320; color: var(--accent2); }
+  .card-icon.purple { background: #26215c; color: var(--purple); }
+  .card-icon.orange { background: #33200d; color: var(--orange); }
+  .card-icon.pink { background: #4b1528; color: var(--pink); }
+  .card-head { flex: 1; min-width: 0; }
+  .card-title { font-size: 16px; font-weight: 600; color: var(--text-bright); }
+  .card-cat { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .card-desc { font-size: 13px; color: var(--text-dim); margin-top: 14px; line-height: 1.5; }
+  .card-footer {
+    margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-version {
+    font-size: 12px; color: var(--text-dim); font-family: "SF Mono", Monaco, monospace;
+  }
+  .card-version .v { color: var(--accent2); }
+  .card-status { font-size: 11px; display: inline-flex; align-items: center; gap: 4px; }
+  .card-status.ok { color: var(--accent2); }
+  .card-status.err { color: var(--danger); }
+
+  /* update badge */
+  .update-badge {
+    position: absolute; top: 14px; right: 14px;
+    font-size: 11px; padding: 3px 9px; border-radius: 10px;
+    background: #3a2a0a; color: var(--warn); font-weight: 500;
+    border: 1px solid #5a3f0a;
+  }
+  .card:hover .update-badge { background: #4a350a; }
+
+  /* loading skeleton */
+  .card-skeleton {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 22px; height: 180px;
+  }
+
+  /* ── switcher (left-top dropdown) ── */
+  .switcher { position: fixed; left: 20px; top: 66px; z-index: 100; }
+  .switcher-btn {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--text); transition: all .15s;
+    box-shadow: 0 4px 12px rgba(0,0,0,.3);
+  }
+  .switcher-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .switcher-btn .arrow { font-size: 10px; color: var(--text-dim); transition: transform .2s; }
+  .switcher.open .switcher-btn .arrow { transform: rotate(180deg); }
+  .switcher-menu {
+    display: none; position: absolute; top: calc(100% + 8px); left: 0;
+    min-width: 220px; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  }
+  .switcher.open .switcher-menu { display: block; }
+  .switcher-item {
+    padding: 11px 16px; font-size: 13px; color: var(--text); cursor: pointer;
+    display: flex; align-items: center; gap: 10px; transition: background .12s;
+    text-decoration: none;
+  }
+  .switcher-item:hover { background: rgba(88,166,255,.08); color: var(--accent); }
+  .switcher-item.active { background: rgba(88,166,255,.12); color: var(--accent); }
+  .switcher-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .switcher-item .pi { font-size: 11px; color: var(--text-dim); margin-left: auto; font-family: "SF Mono", Monaco, monospace; }
+  .switcher-divider { height: 1px; background: var(--border); }
+
+  /* ── empty state ── */
+  .empty {
+    text-align: center; padding: 60px 20px; color: var(--text-dim);
+  }
+  .empty .icon { font-size: 40px; margin-bottom: 12px; opacity: .4; }
+  .empty .hint { font-size: 13px; margin-top: 6px; }
+
+  /* ── responsive ── */
+  @media (max-width: 600px) {
+    .header { flex-wrap: wrap; gap: 8px; }
+    .stat-pill { font-size: 11px; padding: 4px 10px; }
+    .main { padding: 24px 16px 100px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">T</div>
+  <h1>Toolbox</h1>
+  <div class="spacer"></div>
+  <span class="stat-pill" id="statModules">模块 <span class="num">-</span></span>
+  <span class="stat-pill warn" id="statUpdates" style="display:none">可更新 <span class="num">-</span></span>
+  <span class="stat-pill" id="statChecked" style="display:none">检测于 <span class="num">-</span></span>
+  <button class="refresh-btn" id="refreshBtn" onclick="checkAll(true)">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
+    检测更新
+  </button>
+</div>
+
+<div class="notice" id="remoteNotice" style="display:none"></div>
+
+<div class="main">
+  <div class="section-title">已安装模块</div>
+  <div class="grid" id="grid">
+    <div class="card-skeleton"></div>
+    <div class="card-skeleton"></div>
+  </div>
+</div>
+
+<!-- left-bottom switcher -->
+<div class="switcher" id="switcher">
+  <div class="switcher-btn" onclick="toggleSwitcher()">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5A1.5 1.5 0 0 1 3.5 1h9A1.5 1.5 0 0 1 14 2.5v11.25a.75.75 0 0 1-1.06.68L8 11.44l-4.94 2.99A.75.75 0 0 1 2 13.75z"/></svg>
+    模块切换
+    <span class="arrow">▾</span>
+  </div>
+  <div class="switcher-menu" id="switcherMenu"></div>
+</div>
+
+<script>
+let MODULES = [];
+let REMOTE_DIRS = [];
+const CAT_COLORS = {'网络工具':'blue','文档工具':'green','系统工具':'orange','开发工具':'purple','其他':'pink'};
+
+function iconColor(cat) { return CAT_COLORS[cat] || 'pink'; }
+function iconLetter(name) { return (name || '?').charAt(0); }
+
+async function init() {
+  try {
+    const res = await fetch('/api/modules');
+    const data = await res.json();
+    MODULES = data.modules || [];
+    renderCards();
+    renderSwitcher();
+    document.getElementById('statModules').querySelector('.num').textContent = MODULES.length;
+  } catch (e) {
+    document.getElementById('grid').innerHTML =
+      '<div class="empty" style="grid-column:1/-1"><div class="hint">加载失败: ' + e.message + '</div></div>';
+  }
+  checkAll(false);
+}
+
+function renderCards() {
+  const grid = document.getElementById('grid');
+  if (!MODULES.length) {
+    grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="hint">未发现任何模块。在仓库中创建含 module.json 的子目录即可自动识别。</div></div>';
+    return;
+  }
+  grid.innerHTML = MODULES.map(m => {
+    const color = iconColor(m.category);
+    const badge = m.has_update
+      ? `<div class="update-badge">可更新 → v${m.remote_version}</div>` : '';
+    const status = m.mounted
+      ? `<span class="card-status ok">● 运行中</span>`
+      : `<span class="card-status err">● 加载失败</span>`;
+    return `
+      <a class="card" href="${m.url}" ${m.mounted ? '' : 'onclick="return false"'}>
+        ${badge}
+        <div class="card-top">
+          <div class="card-icon ${color}">${iconLetter(m.name)}</div>
+          <div class="card-head">
+            <div class="card-title">${m.name || m.id}</div>
+            <div class="card-cat">${m.category || ''} · ${m.id}</div>
+          </div>
+        </div>
+        <div class="card-desc">${m.description || ''}</div>
+        <div class="card-footer">
+          <span class="card-version">v<span class="v">${m.version || '?'}</span></span>
+          ${status}
+        </div>
+      </a>`;
+  }).join('');
+}
+
+function renderSwitcher() {
+  const menu = document.getElementById('switcherMenu');
+  const colors = {blue:'var(--accent)',green:'var(--accent2)',purple:'var(--purple)',orange:'var(--orange)',pink:'var(--pink)'};
+  let html = '<a class="switcher-item active" href="/"><span class="dot" style="background:var(--accent)"></span>首页<span class="pi">首页</span></a>';
+  html += '<div class="switcher-divider"></div>';
+  MODULES.forEach(m => {
+    const c = CAT_COLORS[m.category] || 'pink';
+    if (m.mounted) {
+      html += `<a class="switcher-item" href="${m.url}">
+        <span class="dot" style="background:${colors[c]}"></span>
+        ${m.name || m.id}
+        <span class="pi" style="color:var(--accent2)">已安装</span>
+      </a>`;
+    } else {
+      html += `<div class="switcher-item" style="cursor:default;opacity:.55">
+        <span class="dot" style="background:var(--danger)"></span>
+        ${m.name || m.id}
+        <span class="pi" style="color:var(--danger)">未安装</span>
+      </div>`;
+    }
+  });
+  REMOTE_DIRS.forEach(d => {
+    html += `<div class="switcher-item" style="cursor:default;opacity:.45">
+      <span class="dot" style="background:var(--text-dim)"></span>
+      ${d}
+      <span class="pi">未安装</span>
+    </div>`;
+  });
+  menu.innerHTML = html;
+}
+
+async function checkAll(force) {
+  const btn = document.getElementById('refreshBtn');
+  btn.classList.add('loading');
+  try {
+    const [updRes, remRes] = await Promise.all([
+      fetch('/api/check-updates' + (force ? '?force=1' : '')),
+      fetch('/api/check-remote' + (force ? '?force=1' : '')),
+    ]);
+    const upd = await updRes.json();
+    const rem = await remRes.json();
+
+    // 合并更新信息到 MODULES
+    const updMap = {};
+    (upd.modules || []).forEach(u => updMap[u.id] = u);
+    MODULES = MODULES.map(m => ({...m, ...(updMap[m.id] || {})}));
+    renderCards();
+
+    // 统计
+    const updates = (upd.modules || []).filter(u => u.has_update);
+    const updPill = document.getElementById('statUpdates');
+    if (updates.length) {
+      updPill.style.display = '';
+      updPill.querySelector('.num').textContent = updates.length;
+    } else {
+      updPill.style.display = 'none';
+    }
+    if (upd.checked_at) {
+      const t = new Date(upd.checked_at * 1000);
+      const chk = document.getElementById('statChecked');
+      chk.style.display = '';
+      chk.querySelector('.num').textContent = t.toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
+    }
+
+    // 远程新模块提示
+    const notice = document.getElementById('remoteNotice');
+    if (rem.remote_dirs && rem.remote_dirs.length) {
+      notice.style.display = '';
+      notice.innerHTML = `<div class="notice-bar">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575z"/><path d="M7.25 6v3.5a.75.75 0 0 0 1.5 0V6a.75.75 0 0 0-1.5 0zm.75 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>
+        远程仓库发现 <b>${rem.remote_dirs.length}</b> 个未同步模块: ${rem.remote_dirs.join(', ')}
+        <span class="close" onclick="this.closest('.notice').style.display='none'">×</span>
+      </div>`;
+    } else {
+      notice.style.display = 'none';
+    }
+    REMOTE_DIRS = rem.remote_dirs || [];
+    renderSwitcher();
+  } catch (e) {
+    console.error('check failed', e);
+  } finally {
+    btn.classList.remove('loading');
+  }
+}
+
+function toggleSwitcher() {
+  document.getElementById('switcher').classList.toggle('open');
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#switcher')) {
+    document.getElementById('switcher').classList.remove('open');
+  }
+});
+
+init();
+</script>
+</body>
+</html>

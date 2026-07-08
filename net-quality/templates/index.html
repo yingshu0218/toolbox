@@ -252,6 +252,7 @@
     .bar-label { width: 80px; font-size: 11px; }
   }
 </style>
+<script>const BASE={{config.get('URL_PREFIX','')|tojson}};</script>
 </head>
 <body>
 
@@ -597,7 +598,7 @@ function startDetection() {
   document.getElementById('statusText').textContent = '正在检测网络质量...';
 
   var stepStartTimes = {};
-  var es = new EventSource('/api/detect/stream');
+  var es = new EventSource(BASE + '/api/detect/stream');
 
   es.addEventListener('progress', function(e) {
     var d = JSON.parse(e.data);

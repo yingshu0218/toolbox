@@ -277,6 +277,7 @@
   }
   .meta-close button:hover { border-color: var(--accent); color: var(--accent); }
 </style>
+<script>const BASE={{config.get('URL_PREFIX','')|tojson}};</script>
 </head>
 <body>
 
@@ -510,8 +511,8 @@ function renderQueue() {
         actions += `<a class="result-btn purple" data-action="md" data-idx="${i}">导出 MD</a>`;
       }
       if (f.status === 'done' && f.result_id) {
-        actions += `<a class="result-btn primary" href="/api/download/${f.result_id}">下载</a>`;
-        actions += `<a class="result-btn" href="/api/open/${f.result_id}">打开</a>`;
+        actions += `<a class="result-btn primary" href="${BASE}/api/download/${f.result_id}">下载</a>`;
+        actions += `<a class="result-btn" href="${BASE}/api/open/${f.result_id}">打开</a>`;
       }
       const bookMeta = f.supported && (m.title || authorStr)
         ? `<div class="meta-book">${m.title ? '<b>'+esc(m.title)+'</b>' : ''}${authorStr ? ' · '+esc(authorStr) : ''}</div>`
@@ -560,7 +561,7 @@ async function uploadFiles(fileList) {
   const fd = new FormData();
   fileList.forEach(f => fd.append('files', f));
   try {
-    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    const r = await fetch(BASE + '/api/upload', { method: 'POST', body: fd });
     const data = await r.json();
     if (data.files) { data.files.forEach(f => files.push(f)); renderQueue(); }
   } catch (e) { alert('上传失败: ' + e.message); }
@@ -622,7 +623,7 @@ function startConvert(targets, mode) {
   });
 
   const ids = targets.map(f => f.id).join(',');
-  const url = mode === 'compress' ? `/api/compress?ids=${encodeURIComponent(ids)}` : `/api/convert?ids=${encodeURIComponent(ids)}&to=${selectedFormat}`;
+  const url = mode === 'compress' ? `${BASE}/api/compress?ids=${encodeURIComponent(ids)}` : `${BASE}/api/convert?ids=${encodeURIComponent(ids)}&to=${selectedFormat}`;
   const es = new EventSource(url);
 
   es.addEventListener('item', e => {
@@ -751,14 +752,14 @@ function showMetaModal(f) {
   if (m.error) rows.push(['解析告警', m.error]);
   $('metaGrid').innerHTML = rows.map(([k,v]) => `<div class="k">${k}</div><div class="v">${esc(String(v))}</div>`).join('');
   if (m.cover_href) {
-    $('metaGrid').innerHTML += `<div class="k">封面预览</div><div class="v"><img src="/api/cover/${f.id}" style="max-width:160px;border-radius:6px;border:1px solid var(--border)" onerror="this.style.display='none'"></div>`;
+    $('metaGrid').innerHTML += `<div class="k">封面预览</div><div class="v"><img src="${BASE}/api/cover/${f.id}" style="max-width:160px;border-radius:6px;border:1px solid var(--border)" onerror="this.style.display='none'"></div>`;
   }
   $('metaModal').classList.remove('hidden');
 }
 
 async function exportMd(fid) {
   try {
-    const r = await fetch(`/api/markdown/${fid}`);
+    const r = await fetch(`${BASE}/api/markdown/${fid}`);
     const d = await r.json();
     if (d.error) { alert(d.error); return; }
     results.push({ result_id: d.result_id, name: d.output, size: d.size, source: '元数据导出' });
@@ -766,7 +767,7 @@ async function exportMd(fid) {
     renderGitResultList();
     // 自动下载
     const a = document.createElement('a');
-    a.href = `/api/download/${d.result_id}`; a.download = d.output; a.click();
+    a.href = `${BASE}/api/download/${d.result_id}`; a.download = d.output; a.click();
   } catch (e) { alert('导出失败: ' + e.message); }
 }
 
@@ -828,7 +829,7 @@ $('gitPushBtn').addEventListener('click', async () => {
   logEl.textContent = '推送中…';
   $('gitPushBtn').disabled = true;
   try {
-    const r = await fetch('/api/push', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const r = await fetch(BASE + '/api/push', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const d = await r.json();
     logEl.textContent = d.log || '';
     if (d.ok) {

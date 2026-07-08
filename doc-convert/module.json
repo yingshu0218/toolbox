@@ -1,0 +1,9 @@
+{
+  "id": "doc-convert",
+  "name": "文档格式转换",
+  "description": "基于 pandoc 的 12 种文档格式互转，拖拽上传 + SSE 进度",
+  "version": "1.0.0",
+  "category": "文档工具",
+  "port": 5100,
+  "entry": "server.py"
+}

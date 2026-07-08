@@ -1,0 +1,9 @@
+{
+  "id": "epub-convert",
+  "name": "EPUB 电子书工具",
+  "description": "格式转换 / 元数据提取 / 图片压缩 / Git 推送",
+  "version": "1.0.0",
+  "category": "文档工具",
+  "port": 5200,
+  "entry": "server.py"
+}

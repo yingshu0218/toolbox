@@ -293,6 +293,7 @@
     font-family: "SF Mono", Monaco, monospace;
   }
 </style>
+<script>const BASE={{config.get('URL_PREFIX','')|tojson}};</script>
 </head>
 <body>
 
@@ -431,8 +432,8 @@ function renderQueue() {
       } else if (f.status === 'done') {
         tag = '<span class="tag done">完成</span>';
         actions = `<div class="result-actions">
-          <a class="result-btn primary" href="/api/download/${f.result_id}">下载</a>
-          <a class="result-btn" href="/api/open/${f.result_id}">打开</a>
+          <a class="result-btn primary" href="${BASE}/api/download/${f.result_id}">下载</a>
+          <a class="result-btn" href="${BASE}/api/open/${f.result_id}">打开</a>
         </div>`;
       } else if (f.status === 'error') {
         tag = `<span class="tag error" title="${(f.message||'').replace(/"/g,'&quot;')}">失败</span>`;
@@ -496,7 +497,7 @@ async function uploadFiles(fileList) {
   const fd = new FormData();
   fileList.forEach(f => fd.append('files', f));
   try {
-    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    const r = await fetch(BASE + '/api/upload', { method: 'POST', body: fd });
     const data = await r.json();
     if (data.files) {
       data.files.forEach(f => files.push(f));
@@ -565,7 +566,7 @@ function startConvert(targets) {
   });
 
   const ids = targets.map(f => f.id).join(',');
-  const es = new EventSource(`/api/convert?ids=${encodeURIComponent(ids)}&to=${selectedFormat}`);
+  const es = new EventSource(`${BASE}/api/convert?ids=${encodeURIComponent(ids)}&to=${selectedFormat}`);
 
   es.addEventListener('item', e => {
     const d = JSON.parse(e.data);
@@ -640,7 +641,7 @@ async function loadEnvCheck() {
   barStatus.textContent = '检测中…';
   body.innerHTML = '';
   try {
-    const r = await fetch('/api/env-check');
+    const r = await fetch(BASE + '/api/env-check');
     const d = await r.json();
     platformBadge.textContent = d.platform_name;
     updateFormatChips(d.latex.available);

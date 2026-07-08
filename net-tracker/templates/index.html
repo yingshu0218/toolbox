@@ -344,6 +344,7 @@
     padding: 16px 20px; color: var(--danger); font-size: 14px;
   }
 </style>
+<script>const BASE={{config.get('URL_PREFIX','')|tojson}};</script>
 </head>
 <body>
 
@@ -984,7 +985,7 @@ function startSSEDetect(domain) {
   document.getElementById('statusDot').className = 'status-dot run';
   document.getElementById('statusText').textContent = '正在检测 ' + domain + ' ...';
 
-  var es = new EventSource('/api/detect/stream?domain=' + encodeURIComponent(domain));
+  var es = new EventSource(BASE + '/api/detect/stream?domain=' + encodeURIComponent(domain));
 
   es.addEventListener('progress', function(e) {
     var d = JSON.parse(e.data);
@@ -1129,7 +1130,7 @@ function startQualityDetect() {
   btn.textContent = '检测中...';
 
   var stepStartTimes = {};
-  var es = new EventSource('/api/quality/stream');
+  var es = new EventSource(BASE + '/api/quality/stream');
 
   es.addEventListener('progress', function(e) {
     var d = JSON.parse(e.data);
