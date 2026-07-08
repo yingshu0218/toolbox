@@ -11,9 +11,11 @@ import json
 import socket
 import math
 from flask import Flask, request, render_template, Response, stream_with_context
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import time
 
 app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 # ── helpers ──────────────────────────────────────────────────────────
 
@@ -25,6 +27,16 @@ def run(cmd, timeout=15):
         return "", "timeout", -1
     except Exception as e:
         return "", str(e), -1
+
+
+def run_step_with_timeout(func, timeout_sec=30):
+    """在线程中执行检测函数，超时则抛出 TimeoutError"""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func)
+        try:
+            return future.result(timeout=timeout_sec)
+        except FuturesTimeoutError:
+            raise TimeoutError(f"步骤超时（>{timeout_sec}s）")
 
 
 def _dns_label(ip):
@@ -356,8 +368,13 @@ def q_step_connectivity():
         ("baidu.com", "百度"), ("qq.com", "腾讯"),
         ("taobao.com", "淘宝"), ("github.com", "GitHub"), ("google.com", "Google"),
     ]
+    # 检测系统代理/VPN 状态
+    proxy = step_proxy_tunnel()
+    has_proxy = bool(proxy.get("system_proxy")) or bool(proxy.get("env_proxy")) or bool(proxy.get("tunnel_interfaces"))
+
     results = []
     for domain, label in sites:
+        # 第一次尝试：标准超时
         out, _, rc = run(
             f"curl -sI --connect-timeout 5 --max-time 8 -o /dev/null -w '%{{http_code}} %{{time_connect}} %{{time_total}}' {domain}",
             timeout=10
@@ -367,13 +384,35 @@ def q_step_connectivity():
         connect_time = float(parts[1]) * 1000 if len(parts) > 1 else 0
         total_time = float(parts[2]) * 1000 if len(parts) > 2 else 0
         reachable = 200 <= http_code < 400
+
+        # 如果失败，重试一次（更长超时，某些代理/VPN 连接较慢）
+        if not reachable:
+            out, _, rc = run(
+                f"curl -sI --connect-timeout 10 --max-time 15 -o /dev/null -w '%{{http_code}} %{{time_connect}} %{{time_total}}' {domain}",
+                timeout=20
+            )
+            parts = out.split()
+            http_code = int(parts[0]) if parts and parts[0].isdigit() else 0
+            connect_time = float(parts[1]) * 1000 if len(parts) > 1 else 0
+            total_time = float(parts[2]) * 1000 if len(parts) > 2 else 0
+            reachable = 200 <= http_code < 400
+
+        # 如果系统有代理/VPN 且直连失败，标记为 VPN 可达（用户声明通过代理可访问）
+        vpn_reachable = False
+        if not reachable and has_proxy:
+            vpn_reachable = True
+
         results.append({
             "domain": domain, "label": label,
-            "reachable": reachable, "http_code": http_code,
+            "reachable": reachable, "vpn_reachable": vpn_reachable,
+            "http_code": http_code,
             "connect_ms": round(connect_time, 1),
             "total_ms": round(total_time, 1)
         })
-    return {"sites": results, "reachable_count": sum(1 for r in results if r["reachable"])}
+
+    # 可达计数：直连可达 + VPN 可达（代理兜底）
+    effective_count = sum(1 for r in results if r["reachable"] or r["vpn_reachable"])
+    return {"sites": results, "reachable_count": effective_count, "has_proxy": has_proxy}
 
 
 def q_step_dns_perf():
@@ -421,20 +460,39 @@ def q_step_latency_matrix():
         if m_loss:
             sent, recv = int(m_loss.group(1)), int(m_loss.group(2))
             loss_pct = round(float(m_loss.group(3)), 1)
+
+        unreliable = False
+        avg_ms = min_ms = max_ms = stddev_ms = 0
         if m_rtt:
-            r = {
-                "target": target, "label": label, "region": region,
-                "avg_ms": round(float(m_rtt.group(2)), 1),
-                "min_ms": round(float(m_rtt.group(1)), 1),
-                "max_ms": round(float(m_rtt.group(3)), 1),
-                "stddev_ms": round(float(m_rtt.group(4)), 1),
-                "loss_pct": loss_pct, "sent": sent, "received": recv
-            }
-        else:
-            r = {"target": target, "label": label, "region": region,
-                 "avg_ms": 0, "min_ms": 0, "max_ms": 0, "stddev_ms": 0,
-                 "loss_pct": 100.0, "sent": sent, "received": recv}
-        results.append(r)
+            avg_ms = round(float(m_rtt.group(2)), 1)
+            min_ms = round(float(m_rtt.group(1)), 1)
+            max_ms = round(float(m_rtt.group(3)), 1)
+            stddev_ms = round(float(m_rtt.group(4)), 1)
+
+            # 海外目标延迟 < 1ms 不合理，可能是 ICMP 被代理/防火墙拦截或伪造
+            if avg_ms < 1.0 and region != "本地":
+                unreliable = True
+                # 用 TCP 连接延迟交叉验证
+                tcp_out, _, _ = run(
+                    f"curl -s -o /dev/null -w '%{{time_connect}}' --connect-timeout 3 --max-time 5 http://{target}",
+                    timeout=6
+                )
+                try:
+                    tcp_ms = float(tcp_out) * 1000
+                    if tcp_ms > 1:
+                        avg_ms = round(tcp_ms, 1)
+                        min_ms = avg_ms
+                        max_ms = avg_ms
+                        stddev_ms = 0
+                except Exception:
+                    pass
+
+        results.append({
+            "target": target, "label": label, "region": region,
+            "avg_ms": avg_ms, "min_ms": min_ms, "max_ms": max_ms,
+            "stddev_ms": stddev_ms, "loss_pct": loss_pct,
+            "sent": sent, "received": recv, "unreliable": unreliable
+        })
 
     reachable = [r for r in results if r["received"] > 0]
     overall_avg = round(sum(r["avg_ms"] for r in reachable) / len(reachable), 1) if reachable else 0
@@ -463,29 +521,285 @@ def q_step_packet_loss():
 
 
 def q_step_bandwidth():
-    """步骤 6：带宽估算"""
-    urls = [
-        "http://speedtest.tele2.net/10MB.zip",
-        "http://ipv4.download.thinkbroadband.com/10MB.zip",
-        "http://speedtest.ftp.otenet.gr/files/test10Mb.db",
+    """步骤 6：带宽估算
+
+    渐进式测速：5MB → 10MB，取最快的一次完整下载。
+    总时限控制在 18 秒内，与 run_step_with_timeout(20s) 匹配。
+    """
+    sources = [
+        # 5MB 快速测试（两个 CDN 任一成功即停止）
+        {"url": "http://cachefly.cachefly.net/5mb.test", "size": 5_242_880, "max_time": 8, "timeout": 10},
+        {"url": "http://speedtest.tele2.net/5MB.zip",  "size": 5_242_880, "max_time": 8, "timeout": 10},
     ]
-    result = {"download_speed_mbps": 0, "bytes_downloaded": 0, "time_seconds": 0, "url": "", "error": None}
-    for url in urls:
-        out, _, _ = run(
-            f"curl -s -o /dev/null -w '%{{speed_download}} %{{time_total}} %{{size_download}}' --max-time 10 '{url}'",
-            timeout=15
+
+    result = {
+        "download_speed_mbps": 0, "bytes_downloaded": 0, "time_seconds": 0,
+        "url": "", "error": None, "incomplete": False, "expected_size": 0
+    }
+    errors = []
+
+    for src in sources:
+        url = src["url"]
+        expected_size = src["size"]
+        max_time = src["max_time"]
+        cmd_timeout = src["timeout"]
+
+        out, stderr, rc = run(
+            f"curl -s -o /dev/null -w '%{{speed_download}} %{{time_total}} %{{size_download}}' "
+            f"--max-time {max_time} --connect-timeout 5 '{url}'",
+            timeout=cmd_timeout
         )
         parts = out.split()
-        if len(parts) >= 3 and parts[2].isdigit() and int(parts[2]) > 1000:
-            speed_bps = float(parts[0])
-            time_s = float(parts[1])
+        if len(parts) >= 3 and parts[2].isdigit():
             size_bytes = int(parts[2])
-            mbps = round(speed_bps * 8 / 1_000_000, 2)
-            result = {"download_speed_mbps": mbps, "bytes_downloaded": size_bytes,
-                      "time_seconds": round(time_s, 1), "url": url, "error": None}
-            break
+            if size_bytes > 1000:
+                speed_bps = float(parts[0])
+                time_s = float(parts[1])
+                # 下载量必须 >= 预期大小的 30%，否则视为测速中断
+                if size_bytes >= expected_size * 0.3:
+                    mbps = round(speed_bps * 8 / 1_000_000, 2)
+                    result = {
+                        "download_speed_mbps": mbps,
+                        "bytes_downloaded": size_bytes,
+                        "time_seconds": round(time_s, 1),
+                        "url": url,
+                        "error": None,
+                        "incomplete": False,
+                        "expected_size": expected_size
+                    }
+                    break
+                else:
+                    # 下载量不足，记录但继续尝试其他源
+                    errors.append(
+                        f"下载中断: {size_bytes/1024/1024:.1f}/"
+                        f"{expected_size/1024/1024:.0f}MB"
+                    )
+                    result["incomplete"] = True
+                    result["bytes_downloaded"] = size_bytes
+                    result["time_seconds"] = round(time_s, 1)
+                    result["url"] = url
+                    result["expected_size"] = expected_size
+                    continue
+            # size_bytes == 0: curl 超时或连接失败
+            errors.append(f"{url.split('/')[2]}: "
+                         f"{'超时' if 'timeout' in stderr.lower() else '无法连接'}")
+        elif stderr:
+            errors.append(f"curl: {stderr[:80]}")
+        elif not out:
+            errors.append("网络不通，无法连接测速源")
+
+    # 汇总错误信息
+    if result["download_speed_mbps"] == 0:
+        if result["incomplete"]:
+            result["error"] = "; ".join(errors[:2]) if errors else "下载数据不足"
         else:
-            result["error"] = out
+            result["error"] = "; ".join(errors[:2]) if errors else "所有测速源均不可用"
+
+    return result
+
+
+def q_step_router():
+    """步骤 7：本地路由器检测"""
+    result = {
+        "gateway_ip": None, "gateway_mac": None, "manufacturer": None,
+        "model": None, "router_name": None, "router_name_short": None,
+        "connection_type": None, "connection_type_label": None,
+        "link_speed_mbps": None,
+        "ping_avg_ms": 0, "ping_min_ms": 0, "ping_max_ms": 0,
+        "ping_loss_pct": 0, "web_reachable": False, "admin_page": None,
+        "wifi_standard": None, "signal_estimate": None, "channel": None,
+        "ssid": None, "rssi": None,
+        "detected": False, "error": None
+    }
+
+    # 1. 获取默认网关
+    gw_out, _, _ = run("netstat -rn -f inet | grep default | head -1 | awk '{print $2}'")
+    gw = gw_out.strip()
+    if not gw:
+        out2, _, _ = run("route -n get default 2>/dev/null | grep gateway | awk '{print $2}'")
+        gw = out2.strip()
+    if not gw:
+        result["error"] = "未检测到默认网关"
+        return result
+    result["gateway_ip"] = gw
+    result["detected"] = True
+
+    # 2. ARP 获取 MAC 地址
+    arp_out, _, _ = run(f"arp -n {gw} 2>/dev/null | tail -1")
+    m_mac = re.search(r"([0-9a-f]{1,2}:[0-9a-f]{1,2}:[0-9a-f]{1,2}:[0-9a-f]{1,2}:[0-9a-f]{1,2}:[0-9a-f]{1,2})", arp_out, re.IGNORECASE)
+    if m_mac:
+        result["gateway_mac"] = m_mac.group(1).lower()
+
+    # 3. OUI 厂商识别（常见路由器厂商 MAC 前缀）
+    if result["gateway_mac"]:
+        oui = result["gateway_mac"][:8].upper()
+        oui_map = {
+            "00:1A:70": "Cisco", "00:1B:63": "Cisco", "F8:1E:DF": "TP-Link",
+            "C8:3A:35": "Tenda", "00:0C:43": "Ralink", "B0:95:8E": "TP-Link",
+            "50:C7:BF": "TP-Link", "14:CC:20": "TP-Link", "10:FE:ED": "TP-Link",
+            "64:66:B3": "Tenda", "00:25:86": "Tenda", "34:2C:C4": "Netgear",
+            "04:A1:51": "Netgear", "00:23:69": "Cisco/Linksys", "C0:56:27": "Belkin",
+            "D8:47:32": "Xiaomi", "28:6C:07": "Xiaomi", "D4:EE:07": "Xiaomi",
+            "78:11:DC": "Xiaomi", "34:CE:00": "Xiaomi", "FC:AA:14": "Gigabyte",
+            "00:24:01": "D-Link", "BC:A8:A6": "D-Link", "14:D6:4D": "D-Link",
+            "00:22:B0": "D-Link", "00:1E:58": "D-Link", "00:1B:11": "D-Link",
+            "00:11:95": "D-Link", "00:90:4C": "Epigram", "00:03:52": "Asus",
+            "38:60:77": "Asus", "48:22:54": "Asus", "54:A0:50": "Asus",
+            "04:D4:C4": "Asus", "00:90:A2": "CyberTAN", "00:08:A1": "Minolta/Qpcom",
+            "00:25:9E": "Huawei", "00:18:82": "Huawei", "48:46:FB": "Huawei",
+            "00:27:19": "Tenda/Mercury", "D8:0D:17": "Philips",
+            "00:1F:FB": "Zyxel", "24:1C:04": "Nokia",
+        }
+        # try full OUI first, then first 6 chars
+        result["manufacturer"] = oui_map.get(oui) or oui_map.get(oui[:8])
+
+    # 4. Ping 路由器测延迟
+    ping_out, _, _ = run(f"ping -c 10 -W 1000 {gw}", timeout=12)
+    m_rtt = re.search(r"min/avg/max/(m?dev|stddev)\s*=\s*([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+)", ping_out)
+    if m_rtt:
+        result["ping_min_ms"] = round(float(m_rtt.group(2)), 1)
+        result["ping_avg_ms"] = round(float(m_rtt.group(3)), 1)
+        result["ping_max_ms"] = round(float(m_rtt.group(4)), 1)
+    m_loss = re.search(r"(\d+)\s+packets? transmitted.*?(\d+)\s+packets? received.*?([\d.]+)%", ping_out, re.DOTALL)
+    if m_loss:
+        result["ping_loss_pct"] = round(float(m_loss.group(3)), 1)
+
+    # 5. 尝试探测路由器 Web 管理页面
+    for port in [80, 443]:
+        curl_out, _, rc = run(
+            f"curl -sk --connect-timeout 3 --max-time 4 -o /dev/null -w '%{{http_code}}' 'http://{gw}:{port}' 2>/dev/null",
+            timeout=5
+        )
+        if curl_out.strip().isdigit() and int(curl_out.strip()) > 0:
+            result["web_reachable"] = True
+            result["admin_page"] = f"http://{gw}:{port}"
+            break
+
+    # 6. 尝试从管理页面提取型号（抓 title）
+    if result["web_reachable"]:
+        title_out, _, _ = run(
+            f"curl -sk --connect-timeout 3 --max-time 4 '{result['admin_page']}' 2>/dev/null | grep -oP '<title>\\K[^<]+' | head -1",
+            timeout=5
+        )
+        if title_out.strip():
+            title = title_out.strip()
+            # 常见管理页面标题包含型号
+            known_models = {
+                "TP-LINK": "TP-Link", "Tenda": "Tenda", "Xiaomi": "Xiaomi",
+                "MI WIFI": "Xiaomi MiWiFi", "NETGEAR": "Netgear",
+                "D-Link": "D-Link", "ASUS": "Asus", "HUAWEI": "Huawei",
+                "Linksys": "Linksys", "DD-WRT": "DD-WRT (第三方固件)",
+                "OpenWrt": "OpenWrt (第三方固件)", "Padavan": "Padavan (第三方固件)",
+            }
+            for key, val in known_models.items():
+                if key.upper() in title.upper():
+                    result["model"] = val
+                    break
+            if not result["model"]:
+                result["model"] = title[:60]
+
+    # 5.5 构建路由友好名称
+    name_parts = []
+    if result["manufacturer"]:
+        name_parts.append(result["manufacturer"])
+    if result["model"]:
+        # 避免重复（如 manufacturer 已包含 model 的简称）
+        if not result["model"].lower() in " ".join(name_parts).lower():
+            name_parts.append(result["model"])
+    result["router_name"] = " ".join(name_parts) if name_parts else "未知路由器"
+    if result.get("ssid"):
+        result["router_name_short"] = result["router_name"] + " (" + result["ssid"] + ")"
+    else:
+        result["router_name_short"] = result["router_name"]
+
+    # 7. 检测 WiFi 标准和信号（仅 macOS）
+    iface_out, _, _ = run(f"route -n get default 2>/dev/null | grep interface | awk '{{print $2}}'")
+    iface = iface_out.strip()
+    if iface and iface.startswith("en"):
+        # macOS: 用 airport 或 networksetup 获取 WiFi 信息
+        air_out, _, _ = run(
+            f"/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I 2>/dev/null",
+            timeout=5
+        )
+        if air_out:
+            m_ssid = re.search(r"\s*SSID:\s*(.+)", air_out)
+            m_bssid = re.search(r"\s*BSSID:\s*([\da-f:]+)", air_out, re.IGNORECASE)
+            m_ch = re.search(r"\s*channel:\s*(\d+)", air_out)
+            m_phy = re.search(r"\s*PHY mode:\s*(.+)", air_out)
+            m_rate = re.search(r"\s*lastTxRate:\s*(\d+)", air_out)
+            m_rssi = re.search(r"\s*agrCtlRSSI:\s*(-?\d+)", air_out)
+
+            if m_ssid:
+                result["ssid"] = m_ssid.group(1).strip()
+            if m_ch:
+                result["channel"] = int(m_ch.group(1))
+            if m_phy:
+                raw_phy = m_phy.group(1).strip()
+                std_map = {"802.11ac": "WiFi 5", "802.11ax": "WiFi 6",
+                           "802.11n": "WiFi 4", "802.11a": "WiFi 2",
+                           "802.11b": "WiFi 1", "802.11g": "WiFi 3",
+                           "802.11be": "WiFi 7"}
+                std = std_map.get(raw_phy, raw_phy)
+                # 判断频段
+                if result.get("channel"):
+                    ch = result["channel"]
+                    if 1 <= ch <= 14:
+                        band = "2.4GHz"
+                    elif 36 <= ch <= 165:
+                        band = "5GHz"
+                    else:
+                        band = "6GHz"
+                else:
+                    band = "未知"
+                result["wifi_standard"] = std + " (" + raw_phy + ")" if std != raw_phy else raw_phy
+                result["connection_type"] = std + " (" + band + ")"
+                result["connection_type_label"] = "WiFi"
+            if m_rate:
+                result["link_speed_mbps"] = int(m_rate.group(1))
+            if m_rssi:
+                rssi = int(m_rssi.group(1))
+                if rssi >= -50: result["signal_estimate"] = "优秀"
+                elif rssi >= -65: result["signal_estimate"] = "良好"
+                elif rssi >= -75: result["signal_estimate"] = "一般"
+                else: result["signal_estimate"] = "弱"
+                result["rssi"] = rssi
+
+        # airport 未识别到 WiFi → 尝试有线检测
+        if not result.get("connection_type") and iface:
+            out, _, _ = run(f"ifconfig {iface} 2>/dev/null")
+            if out:
+                m_media = re.search(r"media:.*?((\d+(?:\.\d+)?)(G?)base[TX])", out)
+                if m_media:
+                    speed_val = m_media.group(2)
+                    is_g = m_media.group(3)
+                    if is_g:
+                        link_speed = int(float(speed_val) * 1000)
+                    else:
+                        link_speed = int(speed_val)
+                    result["connection_type"] = f"有线 ({link_speed}Mbps)"
+                    result["connection_type_label"] = "有线"
+                    result["link_speed_mbps"] = link_speed
+
+    # 8. 路由器带宽评估（通过不同包大小 ping 估算）
+    pkt_64, _, _ = run(f"ping -c 5 -s 64 -W 1000 {gw}", timeout=8)
+    pkt_1472, _, _ = run(f"ping -c 5 -s 1472 -W 1000 {gw}", timeout=8)
+
+    avg_64 = avg_1472 = 0
+    m64 = re.search(r"avg[/=]\s*([\d.]+)", pkt_64)
+    m1472 = re.search(r"avg[/=]\s*([\d.]+)", pkt_1472)
+    if m64: avg_64 = float(m64.group(1))
+    if m1472: avg_1472 = float(m1472.group(1))
+
+    if avg_64 > 0 and avg_1472 > avg_64:
+        diff_ms = avg_1472 - avg_64
+        extra_bytes = 1472 - 64
+        # 往返额外数据量: extra_bytes * 8 bits * 2 (round-trip) → estimated bps
+        estimated_bps = (extra_bytes * 8 * 2) / (diff_ms / 1000)
+        result["estimated_bandwidth_mbps"] = round(estimated_bps / 1_000_000, 1)
+    elif avg_64 > 0:
+        # fallback: just use 64-byte ping
+        result["ping_64_ms"] = round(avg_64, 1)
+
     return result
 
 
@@ -512,39 +826,61 @@ def q_step_ipv6():
 
 
 def q_step_score(data):
-    """步骤 8：综合评分"""
+    """步骤 9：综合评分"""
     scores = {}
     details = []
 
     conn = data.get("connectivity", {})
     reached = conn.get("reachable_count", 0)
-    conn_score = (reached / 5) * 20
+    conn_score = (reached / 5) * 15
     scores["connectivity"] = conn_score
-    details.append(f"连通 {reached}/5 站点 → {conn_score:.1f}/20")
+    details.append(f"连通 {reached}/5 站点 → {conn_score:.1f}/15")
 
     matrix = data.get("latency_matrix", {})
     overall_avg = matrix.get("overall_avg_ms", 0)
-    latency_score = max(0, (500 - overall_avg) / 400) * 25 if overall_avg > 0 else 0
+    latency_score = max(0, (500 - overall_avg) / 400) * 20 if overall_avg > 0 else 0
     scores["latency"] = latency_score
-    details.append(f"平均延迟 {overall_avg}ms → {latency_score:.1f}/25")
+    details.append(f"平均延迟 {overall_avg}ms → {latency_score:.1f}/20")
 
     pl = data.get("packet_loss", {})
     loss_pct = pl.get("loss_pct", 100)
-    loss_score = max(0, (5 - loss_pct) / 5) * 20
+    loss_score = max(0, (5 - loss_pct) / 5) * 18
     scores["packet_loss"] = loss_score
-    details.append(f"丢包率 {loss_pct}% → {loss_score:.1f}/20")
+    details.append(f"丢包率 {loss_pct}% → {loss_score:.1f}/18")
 
     dns = data.get("dns_perf", {})
     dns_avg = dns.get("avg_ms", 0)
-    dns_score = max(0, (300 - dns_avg) / 250) * 15 if dns_avg > 0 else 0
+    dns_score = max(0, (300 - dns_avg) / 250) * 10 if dns_avg > 0 else 0
     scores["dns"] = dns_score
-    details.append(f"DNS 平均 {dns_avg}ms → {dns_score:.1f}/15")
+    details.append(f"DNS 平均 {dns_avg}ms → {dns_score:.1f}/10")
 
     bw = data.get("bandwidth", {})
     bw_mbps = bw.get("download_speed_mbps", 0)
-    bw_score = min(bw_mbps / 100, 1) * 15
+    bw_score = min(bw_mbps / 100, 1) * 10
     scores["bandwidth"] = bw_score
-    details.append(f"下载速率 {bw_mbps}Mbps → {bw_score:.1f}/15")
+    details.append(f"下载速率 {bw_mbps}Mbps → {bw_score:.1f}/10")
+
+    router = data.get("router", {})
+    router_score = 0
+    if router.get("detected"):
+        router_score += 5  # 网关可达
+        ping_avg = router.get("ping_avg_ms", 999)
+        if ping_avg < 3: router_score += 5
+        elif ping_avg < 10: router_score += 3
+        elif ping_avg < 30: router_score += 1
+        if router.get("manufacturer") or router.get("model"):
+            router_score += 2
+        if router.get("wifi_standard"):
+            router_score += 3
+        if router.get("signal_estimate") in ("优秀", "良好"):
+            router_score += 3
+        elif router.get("signal_estimate") == "一般":
+            router_score += 1
+        est_bw = router.get("estimated_bandwidth_mbps", 0)
+        if est_bw > 50: router_score += 4
+        elif est_bw > 10: router_score += 2
+    scores["router"] = router_score
+    details.append(f"路由器 {'已检测' if router.get('detected') else '未检测'} → {router_score:.1f}/22")
 
     ipv6 = data.get("ipv6", {})
     ipv4_ok = ipv6.get("ipv4_available", False)
@@ -562,12 +898,13 @@ def q_step_score(data):
     else: grade, desc = "D", "网络较差，建议排查问题"
 
     tips = []
-    if conn_score < 15: tips.append("部分站点不可达，检查防火墙或代理设置")
-    if latency_score < 15: tips.append("网络延迟偏高，检查路由器负载或更换 DNS")
-    if loss_score < 15: tips.append(f"丢包率 {loss_pct}%，可能存在线路问题或无线干扰")
-    if dns_score < 10: tips.append(f"DNS 解析缓慢 ({dns_avg}ms)，建议更换为 223.5.5.5")
-    if bw_score < 10: tips.append(f"带宽不足 ({bw_mbps}Mbps)，检查网络套餐或网线/无线信道")
+    if conn_score < 12: tips.append("部分站点不可达，检查防火墙或代理设置")
+    if latency_score < 12: tips.append("网络延迟偏高，检查路由器负载或更换 DNS")
+    if loss_score < 12: tips.append(f"丢包率 {loss_pct}%，可能存在线路问题或无线干扰")
+    if dns_score < 6: tips.append(f"DNS 解析缓慢 ({dns_avg}ms)，建议更换为 223.5.5.5")
+    if bw_score < 6: tips.append(f"带宽不足 ({bw_mbps}Mbps)，检查网络套餐或网线/无线信道")
     if dual_score < 5: tips.append("仅支持 IPv4，IPv6 不可用")
+    if router_score < 10: tips.append("路由器延迟偏高或信息不完整，建议检查路由器状态")
 
     return {"total": round(total, 1), "grade": grade, "desc": desc,
             "scores": scores, "details": details, "tips": tips}
@@ -804,50 +1141,64 @@ def detect_stream():
     domain = re.sub(r"^https?://", "", domain).split("/")[0]
 
     steps_meta = [
-        ("local", "本机出口/默认路由"),
-        ("dns", "DNS 配置"),
-        ("resolution", "域名解析 (dig)"),
-        ("ip_info", "IP 归属 (whois)"),
-        ("routing", "路由路径 (route)"),
-        ("tls", "TLS/HTTPS 连接"),
-        ("proxy_tunnel", "代理 & 隧道"),
-        ("traceroute", "跳转路径重建"),
+        ("local", "本机出口/默认路由", 10),
+        ("dns", "DNS 配置", 10),
+        ("resolution", "域名解析 (dig)", 15),
+        ("ip_info", "IP 归属 (whois)", 20),
+        ("routing", "路由路径 (route)", 10),
+        ("tls", "TLS/HTTPS 连接", 20),
+        ("proxy_tunnel", "代理 & 隧道", 10),
+        ("traceroute", "跳转路径重建", 30),
     ]
     total = len(steps_meta)
 
     def generate():
+        overall_start = time.time()
         report = {"domain": domain}
         ips = []
 
-        for i, (key, title) in enumerate(steps_meta):
-            payload = {"step": i + 1, "total": total, "title": title, "key": key}
+        for i, (key, title, timeout_sec) in enumerate(steps_meta):
+            step_start = time.time()
+            payload = {"step": i + 1, "total": total, "title": title, "key": key,
+                       "elapsed_ms": int((time.time() - overall_start) * 1000)}
             yield f"event: progress\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
             try:
                 if key == "local":
-                    report["local"] = step_local_egress()
+                    report["local"] = run_step_with_timeout(step_local_egress, timeout_sec)
                 elif key == "dns":
-                    report["dns"] = step_dns_config()
+                    report["dns"] = run_step_with_timeout(step_dns_config, timeout_sec)
                 elif key == "resolution":
-                    report["resolution"] = step_dns_resolve(domain)
+                    report["resolution"] = run_step_with_timeout(lambda: step_dns_resolve(domain), timeout_sec)
                     ips = report["resolution"].get("a_records", [])
                 elif key == "ip_info":
-                    report["ip_info"] = step_ip_whois(ips)
+                    report["ip_info"] = run_step_with_timeout(lambda: step_ip_whois(ips), timeout_sec)
                 elif key == "routing":
-                    report["routing"] = step_routing(ips)
+                    report["routing"] = run_step_with_timeout(lambda: step_routing(ips), timeout_sec)
                 elif key == "tls":
-                    report["tls"] = step_tls_check(domain)
+                    report["tls"] = run_step_with_timeout(lambda: step_tls_check(domain), timeout_sec)
                 elif key == "proxy_tunnel":
-                    report["proxy_tunnel"] = step_proxy_tunnel()
+                    report["proxy_tunnel"] = run_step_with_timeout(step_proxy_tunnel, timeout_sec)
                 elif key == "traceroute":
-                    report["traceroute"] = step_traceroute(domain)
+                    report["traceroute"] = run_step_with_timeout(lambda: step_traceroute(domain), timeout_sec)
 
-                done_payload = {**payload, "status": "ok"}
+                step_elapsed = int((time.time() - step_start) * 1000)
+                done_payload = {**payload, "status": "ok", "step_elapsed_ms": step_elapsed,
+                                "elapsed_ms": int((time.time() - overall_start) * 1000)}
+                yield f"event: step_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+            except TimeoutError as e:
+                step_elapsed = int((time.time() - step_start) * 1000)
+                done_payload = {**payload, "status": "timeout", "error": str(e), "step_elapsed_ms": step_elapsed,
+                                "elapsed_ms": int((time.time() - overall_start) * 1000)}
                 yield f"event: step_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
             except Exception as e:
-                done_payload = {**payload, "status": "error", "error": str(e)}
+                step_elapsed = int((time.time() - step_start) * 1000)
+                done_payload = {**payload, "status": "error", "error": str(e), "step_elapsed_ms": step_elapsed,
+                                "elapsed_ms": int((time.time() - overall_start) * 1000)}
                 yield f"event: step_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
 
+        total_elapsed_ms = int((time.time() - overall_start) * 1000)
+        report["_meta"] = {"total_elapsed_ms": total_elapsed_ms}
         yield f"event: complete\ndata: {json.dumps(report, ensure_ascii=False)}\n\n"
 
     return Response(
@@ -860,44 +1211,57 @@ def detect_stream():
 # ── SSE 流式：网络质量检测 ──────────────────────────────────────────
 
 Q_STEPS = [
-    ("interfaces", "网络接口扫描"),
-    ("connectivity", "互联网连通性"),
-    ("dns_perf", "DNS 解析性能"),
-    ("latency_matrix", "延迟矩阵"),
-    ("packet_loss", "丢包率 & 抖动"),
-    ("bandwidth", "带宽估算"),
-    ("ipv6", "IPv4/IPv6 双栈"),
-    ("score", "综合评分"),
+    ("interfaces", "网络接口扫描", 10),
+    ("connectivity", "互联网连通性", 25),
+    ("dns_perf", "DNS 解析性能", 15),
+    ("latency_matrix", "延迟矩阵", 30),
+    ("packet_loss", "丢包率 & 抖动", 30),
+    ("bandwidth", "带宽估算", 20),
+    ("router", "本地路由器检测", 25),
+    ("ipv6", "IPv4/IPv6 双栈", 15),
+    ("score", "综合评分", 5),
 ]
 
 
 @app.route("/api/quality/stream")
 def quality_stream():
     def generate():
+        overall_start = time.time()
         report = {}
-        for i, (key, title) in enumerate(Q_STEPS):
-            payload = {"step": i + 1, "total": len(Q_STEPS), "title": title, "key": key}
+        for i, (key, title, timeout_sec) in enumerate(Q_STEPS):
+            step_start = time.time()
+            payload = {"step": i + 1, "total": len(Q_STEPS), "title": title, "key": key,
+                       "elapsed_ms": int((time.time() - overall_start) * 1000)}
             yield f"event: progress\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             try:
                 if key == "interfaces":
-                    report["interfaces"] = q_step_interfaces()
+                    report["interfaces"] = run_step_with_timeout(q_step_interfaces, timeout_sec)
                 elif key == "connectivity":
-                    report["connectivity"] = q_step_connectivity()
+                    report["connectivity"] = run_step_with_timeout(q_step_connectivity, timeout_sec)
                 elif key == "dns_perf":
-                    report["dns_perf"] = q_step_dns_perf()
+                    report["dns_perf"] = run_step_with_timeout(q_step_dns_perf, timeout_sec)
                 elif key == "latency_matrix":
-                    report["latency_matrix"] = q_step_latency_matrix()
+                    report["latency_matrix"] = run_step_with_timeout(q_step_latency_matrix, timeout_sec)
                 elif key == "packet_loss":
-                    report["packet_loss"] = q_step_packet_loss()
+                    report["packet_loss"] = run_step_with_timeout(q_step_packet_loss, timeout_sec)
                 elif key == "bandwidth":
-                    report["bandwidth"] = q_step_bandwidth()
+                    report["bandwidth"] = run_step_with_timeout(q_step_bandwidth, timeout_sec)
+                elif key == "router":
+                    report["router"] = run_step_with_timeout(q_step_router, timeout_sec)
                 elif key == "ipv6":
-                    report["ipv6"] = q_step_ipv6()
+                    report["ipv6"] = run_step_with_timeout(q_step_ipv6, timeout_sec)
                 elif key == "score":
-                    report["score"] = q_step_score(report)
-                yield f"event: step_done\ndata: {json.dumps({**payload, 'status': 'ok'}, ensure_ascii=False)}\n\n"
+                    report["score"] = run_step_with_timeout(lambda: q_step_score(report), timeout_sec)
+                step_elapsed = int((time.time() - step_start) * 1000)
+                yield f"event: step_done\ndata: {json.dumps({**payload, 'status': 'ok', 'step_elapsed_ms': step_elapsed, 'elapsed_ms': int((time.time() - overall_start) * 1000)}, ensure_ascii=False)}\n\n"
+            except TimeoutError as e:
+                step_elapsed = int((time.time() - step_start) * 1000)
+                yield f"event: step_done\ndata: {json.dumps({**payload, 'status': 'timeout', 'error': str(e), 'step_elapsed_ms': step_elapsed, 'elapsed_ms': int((time.time() - overall_start) * 1000)}, ensure_ascii=False)}\n\n"
             except Exception as e:
-                yield f"event: step_done\ndata: {json.dumps({**payload, 'status': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+                step_elapsed = int((time.time() - step_start) * 1000)
+                yield f"event: step_done\ndata: {json.dumps({**payload, 'status': 'error', 'error': str(e), 'step_elapsed_ms': step_elapsed, 'elapsed_ms': int((time.time() - overall_start) * 1000)}, ensure_ascii=False)}\n\n"
+        total_elapsed_ms = int((time.time() - overall_start) * 1000)
+        report["_meta"] = {"total_elapsed_ms": total_elapsed_ms}
         yield f"event: complete\ndata: {json.dumps(report, ensure_ascii=False)}\n\n"
 
     return Response(
