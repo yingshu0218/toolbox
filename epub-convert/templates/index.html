@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EPUB 电子书工具</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg-card: #161b22; --bg-input: #0d1117;
+    --border: #30363d; --border-hover: #58a6ff;
+    --text: #c9d1d9; --text-dim: #8b949e; --text-bright: #f0f6fc;
+    --accent: #58a6ff; --accent2: #3fb950; --warn: #d29922;
+    --danger: #f85149; --purple: #bc8cff; --teal: #39d353;
+    --orange: #f0883e; --pink: #db61a2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.6;
+  }
+  .header {
+    background: var(--bg-card); border-bottom: 1px solid var(--border);
+    padding: 16px 24px; display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .header h1 { font-size: 18px; font-weight: 600; color: var(--text-bright); }
+  .header .badge { font-size: 11px; padding: 3px 8px; border-radius: 10px; }
+  .badge.ok { background: #1a2e1a; color: var(--accent2); }
+  .badge.err { background: #3a1a1a; color: var(--danger); }
+  .badge.dim { background: #1f2937; color: var(--text-dim); }
+  .header .spacer { flex: 1; }
+
+  .container { max-width: 920px; margin: 0 auto; padding: 28px 24px 60px; }
+
+  /* 状态卡 */
+  .status-card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 16px;
+  }
+  .status-icon {
+    width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 20px;
+  }
+  .status-icon.ok { background: #1a2e1a; color: var(--accent2); }
+  .status-icon.err { background: #3a1a1a; color: var(--danger); }
+  .status-info { flex: 1; min-width: 0; }
+  .status-info .title { font-size: 14px; font-weight: 600; color: var(--text-bright); }
+  .status-info .desc { font-size: 12px; color: var(--text-dim); margin-top: 2px;
+    font-family: "SF Mono", Monaco, monospace; word-break: break-all; }
+  .status-extra { font-size: 11px; color: var(--text-dim); text-align: right; flex-shrink: 0; }
+  .status-extra .kv { display: block; margin-bottom: 2px; }
+
+  /* 拖拽区 */
+  .dropzone {
+    border: 1.5px dashed var(--border); border-radius: 12px;
+    padding: 44px 20px; text-align: center; background: var(--bg-card);
+    transition: all .2s; cursor: pointer; position: relative;
+  }
+  .dropzone:hover { border-color: var(--border-hover); background: #1a2030; }
+  .dropzone.dragover {
+    border-color: var(--accent); background: rgba(88,166,255,0.06);
+    border-style: solid;
+  }
+  .dropzone .icon { font-size: 36px; margin-bottom: 10px; opacity: 0.5; }
+  .dropzone .main-text { font-size: 15px; font-weight: 500; color: var(--text-bright); margin-bottom: 4px; }
+  .dropzone .sub-text { font-size: 13px; color: var(--text-dim); }
+  .dropzone .sub-text a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .dropzone .exts {
+    font-size: 11px; color: var(--text-dim); margin-top: 14px;
+    font-family: "SF Mono", Monaco, monospace; letter-spacing: 0.3px;
+  }
+
+  /* 文件队列 */
+  .queue-section { margin-top: 20px; }
+  .queue-header { display: flex; align-items: center; margin-bottom: 10px; padding: 0 4px; }
+  .queue-header .label { font-size: 13px; font-weight: 500; color: var(--text-dim); }
+  .queue-header .count {
+    font-size: 11px; color: var(--accent); background: rgba(88,166,255,0.1);
+    padding: 2px 8px; border-radius: 10px; margin-left: 8px;
+  }
+  .queue-header .clear-btn {
+    margin-left: auto; font-size: 12px; color: var(--text-dim); cursor: pointer;
+    background: none; border: none; transition: color .2s;
+  }
+  .queue-header .clear-btn:hover { color: var(--danger); }
+  .queue { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .queue:empty { display: none; }
+  .queue-item {
+    display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px;
+    border-bottom: 1px solid var(--border); transition: background .15s;
+  }
+  .queue-item:last-child { border-bottom: none; }
+  .queue-item:hover { background: rgba(255,255,255,0.02); }
+  .queue-item .file-icon {
+    width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; background: #2a1a2a; color: var(--pink);
+  }
+  .queue-item .info { flex: 1; min-width: 0; }
+  .queue-item .name { font-size: 13px; color: var(--text-bright); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .queue-item .meta { font-size: 11px; color: var(--text-dim); font-family: "SF Mono", Monaco, monospace; margin-top: 2px; }
+  .queue-item .meta-book { font-size: 12px; color: var(--text); margin-top: 4px; }
+  .queue-item .meta-book b { color: var(--text-bright); font-weight: 600; }
+  .queue-item .actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+  .queue-item .remove { color: var(--text-dim); cursor: pointer; font-size: 16px; flex-shrink: 0;
+    width: 24px; text-align: center; transition: color .15s; line-height: 1; margin-left: 4px; }
+  .queue-item .remove:hover { color: var(--danger); }
+  .tag { font-size: 10px; padding: 3px 9px; border-radius: 10px; flex-shrink: 0; display: inline-block; }
+  .tag.ready { background: #1f2937; color: var(--text-dim); }
+  .tag.converting { background: #1a2e5a; color: var(--accent); }
+  .tag.done { background: #1a2e1a; color: var(--accent2); }
+  .tag.error { background: #3a1a1a; color: var(--danger); }
+  .tag.warn { background: #3a2a0a; color: var(--warn); }
+  .tag.compress { background: #2a1a2a; color: var(--purple); }
+  .result-btn {
+    font-size: 11px; padding: 5px 11px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg-input); color: var(--text);
+    transition: all .15s; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+  }
+  .result-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .result-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .result-btn.primary:hover { background: #4090e0; color: #fff; }
+  .result-btn.purple { border-color: var(--purple); color: var(--purple); }
+  .result-btn.purple:hover { background: rgba(188,140,255,0.1); }
+
+  /* 操作面板 */
+  .ops-section {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+    margin-top: 20px; overflow: hidden;
+  }
+  .ops-tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .ops-tab {
+    padding: 12px 20px; font-size: 13px; color: var(--text-dim); cursor: pointer;
+    border: none; background: none; transition: all .15s; border-bottom: 2px solid transparent;
+    display: flex; align-items: center; gap: 6px; font-weight: 500;
+  }
+  .ops-tab:hover { color: var(--text); }
+  .ops-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .ops-tab .num { font-size: 10px; background: var(--bg-input); padding: 1px 6px; border-radius: 8px; }
+  .ops-tab.active .num { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .ops-body { padding: 20px; }
+  .ops-pane { display: none; }
+  .ops-pane.active { display: block; }
+
+  .section-title { font-size: 13px; font-weight: 500; color: var(--text-dim); margin-bottom: 12px; }
+  .format-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    font-size: 12px; padding: 7px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg-input); color: var(--text);
+    transition: all .15s; user-select: none; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .chip:hover { border-color: var(--border-hover); color: var(--text-bright); }
+  .chip.active { background: rgba(88,166,255,0.12); color: var(--accent); border-color: var(--accent); }
+  .chip.disabled { opacity: 0.4; cursor: not-allowed; }
+  .chip .note { font-size: 10px; color: var(--warn); }
+
+  .convert-bar { display: flex; align-items: center; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .convert-bar .stat { font-size: 12px; color: var(--text-dim); }
+  .convert-bar .spacer { flex: 1; }
+  .convert-btn {
+    padding: 10px 28px; border-radius: 8px; border: none;
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: background .2s;
+  }
+  .convert-btn:hover { background: #4090e0; }
+  .convert-btn:disabled { background: #30363d; color: var(--text-dim); cursor: not-allowed; }
+  .convert-btn.purple { background: var(--purple); }
+  .convert-btn.purple:hover { background: #a06de0; }
+
+  /* 压缩面板 */
+  .compress-info {
+    background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; font-size: 12px; color: var(--text-dim); margin-bottom: 14px;
+  }
+  .compress-info b { color: var(--warn); }
+
+  /* git 推送 */
+  .git-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .git-form .full { grid-column: 1 / -1; }
+  .git-field label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 5px; }
+  .git-field input, .git-field textarea {
+    width: 100%; padding: 9px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg-input); color: var(--text);
+    font-size: 13px; outline: none; transition: border-color .2s; font-family: inherit;
+  }
+  .git-field input:focus, .git-field textarea:focus { border-color: var(--accent); }
+  .git-field textarea { resize: vertical; min-height: 60px; font-family: "SF Mono", Monaco, monospace; font-size: 12px; }
+  .git-field .hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+  .git-presets { display: flex; gap: 8px; margin-bottom: 12px; }
+  .git-preset {
+    font-size: 11px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg-input); color: var(--text-dim);
+    transition: all .15s;
+  }
+  .git-preset:hover { border-color: var(--accent); color: var(--accent); }
+  .git-result-list {
+    margin-top: 14px; border: 1px solid var(--border); border-radius: 8px;
+    max-height: 200px; overflow-y: auto;
+  }
+  .git-result-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    border-bottom: 1px solid var(--border); font-size: 12px; cursor: pointer;
+  }
+  .git-result-item:last-child { border-bottom: none; }
+  .git-result-item:hover { background: rgba(88,166,255,0.05); }
+  .git-result-item .chk {
+    width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--border);
+    flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 10px;
+  }
+  .git-result-item.checked .chk { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .git-result-item .name { flex: 1; color: var(--text-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .git-result-item .sz { font-size: 11px; color: var(--text-dim); font-family: "SF Mono", Monaco, monospace; }
+  .git-log {
+    margin-top: 12px; background: var(--bg-input); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; font-family: "SF Mono", Monaco, monospace;
+    font-size: 11px; color: var(--text-dim); white-space: pre-wrap; max-height: 200px; overflow-y: auto;
+  }
+  .git-log.ok { border-color: var(--accent2); color: var(--accent2); }
+  .git-log.err { border-color: var(--danger); color: var(--danger); }
+
+  /* 进度面板 */
+  .prog-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 999;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .prog-panel {
+    width: 100%; max-width: 480px; background: var(--bg-card);
+    border: 1px solid var(--border); border-radius: 12px; padding: 24px;
+  }
+  .prog-title { font-size: 15px; font-weight: 600; color: var(--text-bright); margin-bottom: 16px; text-align: center; }
+  .prog-bar-wrap { width: 100%; height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden; margin-bottom: 8px; }
+  .prog-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 3px; width: 0%; transition: width .4s ease; }
+  .prog-percent { font-size: 12px; color: var(--text-dim); text-align: center; margin-bottom: 16px; font-family: "SF Mono", Monaco, monospace; }
+  .prog-steps { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+  .prog-step {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+    border-radius: 6px; font-size: 13px; color: var(--text-dim);
+    transition: all .2s; border: 1px solid transparent;
+  }
+  .prog-step.active { color: var(--text-bright); background: rgba(88,166,255,0.08); border-color: rgba(88,166,255,0.2); }
+  .prog-step.done { color: var(--accent2); }
+  .prog-step.error { color: var(--danger); }
+  .prog-step-icon {
+    width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 10px;
+    border: 1.5px solid var(--border);
+  }
+  .prog-step.active .prog-step-icon { border-color: var(--accent); }
+  .prog-step.done .prog-step-icon { border-color: var(--accent2); background: var(--accent2); color: #0d1117; }
+  .prog-step.error .prog-step-icon { border-color: var(--danger); background: var(--danger); color: #0d1117; }
+  .prog-step-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .prog-step-msg { font-size: 11px; color: var(--text-dim); font-family: "SF Mono", Monaco, monospace; }
+
+  .hidden { display: none !important; }
+  .empty-hint { text-align: center; padding: 40px 20px; color: var(--text-dim); font-size: 13px; }
+  .footer-note { text-align: center; font-size: 11px; color: var(--text-dim); margin-top: 32px; font-family: "SF Mono", Monaco, monospace; }
+
+  /* 元数据详情弹层 */
+  .meta-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 998;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .meta-panel {
+    width: 100%; max-width: 560px; max-height: 80vh; overflow-y: auto;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px;
+  }
+  .meta-panel h3 { font-size: 16px; color: var(--text-bright); margin-bottom: 4px; }
+  .meta-panel .sub { font-size: 12px; color: var(--text-dim); margin-bottom: 16px; }
+  .meta-grid { display: grid; grid-template-columns: 100px 1fr; gap: 8px 14px; font-size: 13px; }
+  .meta-grid .k { color: var(--text-dim); }
+  .meta-grid .v { color: var(--text-bright); word-break: break-all; }
+  .meta-close { margin-top: 18px; text-align: right; }
+  .meta-close button {
+    padding: 8px 20px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg-input); color: var(--text); cursor: pointer; font-size: 13px;
+  }
+  .meta-close button:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span style="font-size:18px;">📚</span>
+  <h1>EPUB 电子书工具</h1>
+  {% if pandoc_path %}
+  <span class="badge ok">pandoc {{ pandoc_version }} ✓</span>
+  {% else %}
+  <span class="badge err">pandoc 未安装</span>
+  {% endif %}
+  {% if git_path %}
+  <span class="badge ok">git {{ git_version }} ✓</span>
+  {% else %}
+  <span class="badge err">git 未安装</span>
+  {% endif %}
+  <span class="spacer"></span>
+  <span class="badge dim">本地处理 · 数据不外传</span>
+</div>
+
+<div class="container">
+
+  <!-- 状态卡 -->
+  <div class="status-card">
+    <div class="status-icon {% if pandoc_path %}ok{% else %}err{% endif %}">
+      {% if pandoc_path %}✓{% else %}✕{% endif %}
+    </div>
+    <div class="status-info">
+      <div class="title">pandoc {% if pandoc_path %}{{ pandoc_version }}{% else %}未检测到{% endif %}</div>
+      <div class="desc">{% if pandoc_path %}{{ pandoc_path }}{% else %}请安装: brew install pandoc{% endif %}</div>
+    </div>
+    <div class="status-extra">
+      <span class="kv">LaTeX: {% if latex_engine %}<span style="color:var(--accent2)">{{ latex_engine }} ✓</span>{% else %}<span style="color:var(--warn)">未安装</span>{% endif %}</span>
+      <span class="kv">git: {% if git_path %}<span style="color:var(--accent2)">{{ git_version }} ✓</span>{% else %}<span style="color:var(--danger)">未安装</span>{% endif %}</span>
+    </div>
+  </div>
+
+  <!-- 拖拽区 -->
+  <div class="dropzone" id="dropzone">
+    <div class="icon">📚</div>
+    <div class="main-text">拖拽 EPUB 文件到此处</div>
+    <div class="sub-text">或 <a id="clickSelect">点击选择文件</a> · 支持批量</div>
+    <div class="exts">.epub</div>
+    <input type="file" id="fileInput" multiple accept=".epub" style="display:none">
+  </div>
+
+  <!-- 文件队列 -->
+  <div class="queue-section">
+    <div class="queue-header">
+      <span class="label">书籍队列</span>
+      <span class="count" id="queueCount">0</span>
+      <button class="clear-btn" id="clearBtn">清空</button>
+    </div>
+    <div class="queue" id="queue"></div>
+    <div class="empty-hint hidden" id="emptyHint">还没有添加 EPUB 文件</div>
+  </div>
+
+  <!-- 操作面板 -->
+  <div class="ops-section" id="opsSection" style="display:none">
+    <div class="ops-tabs">
+      <button class="ops-tab active" data-pane="convert">🔄 格式转换 <span class="num" id="cnConvert">0</span></button>
+      <button class="ops-tab" data-pane="compress">🗜️ 压缩 <span class="num" id="cnCompress">0</span></button>
+      <button class="ops-tab" data-pane="metadata">📝 元数据</button>
+      <button class="ops-tab" data-pane="git">⬆ 推送 Git</button>
+    </div>
+    <div class="ops-body">
+
+      <!-- 转换 -->
+      <div class="ops-pane active" id="pane-convert">
+        <div class="section-title">输出格式</div>
+        <div class="format-chips" id="formatChips">
+          {% for key, (pandoc_fmt, ext, name, need_latex) in output_formats.items() %}
+          <span class="chip {% if need_latex and not latex_engine %}disabled{% endif %}"
+                data-format="{{ key }}" data-ext="{{ ext }}"
+                {% if need_latex and not latex_engine %}title="需要 LaTeX 引擎"{% endif %}>
+            {{ key }}
+            {% if need_latex and not latex_engine %}<span class="note">需LaTeX</span>{% endif %}
+          </span>
+          {% endfor %}
+        </div>
+        <div class="convert-bar">
+          <span class="stat" id="convertStat">选择文件和格式后开始转换</span>
+          <span class="spacer"></span>
+          <button class="convert-btn" id="convertBtn" disabled>开始转换</button>
+        </div>
+      </div>
+
+      <!-- 压缩 -->
+      <div class="ops-pane" id="pane-compress">
+        <div class="compress-info">
+          目标：将 EPUB 压缩到 <b>{{ target_mb }}MB</b> 以内。工具会重压内部图片（降质量 + 缩尺寸）、最大化 ZIP 压缩率。小于 {{ target_mb }}MB 的文件将原样复制。
+        </div>
+        <div class="section-title">需要压缩的书籍</div>
+        <div id="compressList" style="margin-bottom:14px;"></div>
+        <div class="convert-bar">
+          <span class="stat" id="compressStat">暂无需压缩文件</span>
+          <span class="spacer"></span>
+          <button class="convert-btn purple" id="compressBtn" disabled>开始压缩</button>
+        </div>
+      </div>
+
+      <!-- 元数据 -->
+      <div class="ops-pane" id="pane-metadata">
+        <div class="section-title">书籍元数据</div>
+        <div id="metaList"></div>
+      </div>
+
+      <!-- git -->
+      <div class="ops-pane" id="pane-git">
+        <div class="section-title">Git 推送配置</div>
+        <div class="git-presets">
+          <span class="git-preset" data-host="github">GitHub</span>
+          <span class="git-preset" data-host="gitea">Gitea</span>
+        </div>
+        <div class="git-form">
+          <div class="git-field full">
+            <label>仓库地址 (HTTPS)</label>
+            <input type="text" id="gitRepo" placeholder="https://github.com/user/repo.git">
+          </div>
+          <div class="git-field">
+            <label>分支</label>
+            <input type="text" id="gitBranch" value="main" placeholder="main">
+          </div>
+          <div class="git-field">
+            <label>访问令牌 (Token)</label>
+            <input type="password" id="gitToken" placeholder="ghp_xxx 或 gitea token">
+            <div class="hint">GitHub: 用 Personal Access Token；Gitea: 用账户令牌</div>
+          </div>
+          <div class="git-field">
+            <label>提交者名称</label>
+            <input type="text" id="gitAuthor" value="epub-convert">
+          </div>
+          <div class="git-field">
+            <label>提交者邮箱</label>
+            <input type="text" id="gitEmail" value="epub-convert@local">
+          </div>
+          <div class="git-field full">
+            <label>提交信息</label>
+            <textarea id="gitMsg">chore: 推送 EPUB 转换结果</textarea>
+          </div>
+        </div>
+        <div class="section-title" style="margin-top:16px">选择要推送的结果文件</div>
+        <div class="git-result-list" id="gitResultList">
+          <div class="empty-hint" style="padding:20px">暂无结果文件，请先转换或压缩</div>
+        </div>
+        <div class="convert-bar">
+          <span class="stat" id="gitStat">未选择文件</span>
+          <span class="spacer"></span>
+          <button class="convert-btn" id="gitPushBtn" disabled>推送到仓库</button>
+        </div>
+        <div class="git-log hidden" id="gitLog"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="footer-note">pandoc {{ pandoc_version }} · {{ output_formats|length }} 种输出 · 压缩目标 {{ target_mb }}MB · 端口 {{ port }}</div>
+
+</div>
+
+<!-- 进度遮罩 -->
+<div class="prog-overlay hidden" id="progOverlay">
+  <div class="prog-panel">
+    <div class="prog-title" id="progTitle">处理中…</div>
+    <div class="prog-bar-wrap"><div class="prog-bar-fill" id="progBar"></div></div>
+    <div class="prog-percent" id="progPercent">0%</div>
+    <div class="prog-steps" id="progSteps"></div>
+  </div>
+</div>
+
+<!-- 元数据详情弹层 -->
+<div class="meta-modal hidden" id="metaModal">
+  <div class="meta-panel" id="metaPanel">
+    <h3 id="metaTitle">—</h3>
+    <div class="sub" id="metaSub">—</div>
+    <div class="meta-grid" id="metaGrid"></div>
+    <div class="meta-close"><button id="metaCloseBtn">关闭</button></div>
+  </div>
+</div>
+
+<script>
+const files = []; // {id, name, size, supported, input_ext, metadata, needs_compress, status, result_id, output, message, result_size}
+const results = []; // 推送用结果池 {result_id, name, size, source}
+let selectedFormat = 'md';
+let activePane = 'convert';
+
+const $ = id => document.getElementById(id);
+const queueEl = $('queue');
+const countEl = $('queueCount');
+const emptyHint = $('emptyHint');
+const opsSection = $('opsSection');
+
+function fmtSize(n) {
+  for (const u of ['B','KB','MB','GB']) {
+    if (n < 1024) return u === 'B' ? `${n} ${u}` : `${n.toFixed(1)} ${u}`;
+    n /= 1024;
+  }
+  return `${n.toFixed(1)} TB`;
+}
+
+function esc(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function renderQueue() {
+  countEl.textContent = files.length;
+  opsSection.style.display = files.length ? 'block' : 'none';
+  if (files.length === 0) {
+    queueEl.innerHTML = '';
+    emptyHint.classList.remove('hidden');
+  } else {
+    emptyHint.classList.add('hidden');
+    queueEl.innerHTML = files.map((f, i) => {
+      const m = f.metadata || {};
+      const authorStr = (m.creators||[]).map(c=>c.name).join(', ');
+      let tag = '';
+      if (!f.supported) {
+        tag = '<span class="tag error">不支持</span>';
+      } else if (f.status === 'done') {
+        tag = '<span class="tag done">完成</span>';
+      } else if (f.status === 'error') {
+        tag = `<span class="tag error" title="${esc(f.message||'')}">失败</span>`;
+      } else if (f.status === 'converting') {
+        tag = '<span class="tag converting">处理中</span>';
+      } else if (f.needs_compress) {
+        tag = '<span class="tag warn">需压缩</span>';
+      } else {
+        tag = '<span class="tag ready">就绪</span>';
+      }
+      let actions = '';
+      if (f.supported) {
+        actions += `<a class="result-btn" data-action="meta" data-idx="${i}">元数据</a>`;
+        actions += `<a class="result-btn purple" data-action="md" data-idx="${i}">导出 MD</a>`;
+      }
+      if (f.status === 'done' && f.result_id) {
+        actions += `<a class="result-btn primary" href="/api/download/${f.result_id}">下载</a>`;
+        actions += `<a class="result-btn" href="/api/open/${f.result_id}">打开</a>`;
+      }
+      const bookMeta = f.supported && (m.title || authorStr)
+        ? `<div class="meta-book">${m.title ? '<b>'+esc(m.title)+'</b>' : ''}${authorStr ? ' · '+esc(authorStr) : ''}</div>`
+        : '';
+      const metaLine = f.supported
+        ? `${fmtSize(f.size)} · epub${f.needs_compress ? ' · ⚠ 超 50MB' : ''}${f.output ? ' · → '+esc(f.output) : ''}${f.result_size!=null ? ' ('+fmtSize(f.result_size)+')' : ''}`
+        : `${fmtSize(f.size)} · .${f.input_ext||'?'}`;
+      return `<div class="queue-item">
+        <div class="file-icon">📚</div>
+        <div class="info">
+          <div class="name">${esc(f.name)}</div>
+          <div class="meta">${metaLine}</div>
+          ${bookMeta}
+        </div>
+        <div class="actions">${actions}</div>
+        <span class="tag">${tag}</span>
+        <span class="remove" data-idx="${i}">✕</span>
+      </div>`;
+    }).join('');
+  }
+  updateCounts();
+  renderCompressList();
+  renderMetaList();
+  renderGitResultList();
+  updateConvertBtn();
+  updateCompressBtn();
+}
+
+function updateCounts() {
+  const ready = files.filter(f => f.supported && f.status !== 'done' && f.status !== 'converting');
+  const needCompress = files.filter(f => f.supported && f.needs_compress && !f.compress_done);
+  $('cnConvert').textContent = ready.length;
+  $('cnCompress').textContent = needCompress.length;
+}
+
+// 拖拽
+const dz = $('dropzone');
+['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); dz.classList.add('dragover'); }));
+['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); dz.classList.remove('dragover'); }));
+dz.addEventListener('drop', e => { const d = Array.from(e.dataTransfer.files); if (d.length) uploadFiles(d); });
+$('clickSelect').addEventListener('click', e => { e.stopPropagation(); $('fileInput').click(); });
+dz.addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', e => { if (e.target.files.length) uploadFiles(Array.from(e.target.files)); e.target.value=''; });
+
+async function uploadFiles(fileList) {
+  const fd = new FormData();
+  fileList.forEach(f => fd.append('files', f));
+  try {
+    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (data.files) { data.files.forEach(f => files.push(f)); renderQueue(); }
+  } catch (e) { alert('上传失败: ' + e.message); }
+}
+
+// tab 切换
+document.querySelectorAll('.ops-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.ops-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.ops-pane').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    activePane = tab.dataset.pane;
+    $('pane-' + activePane).classList.add('active');
+  });
+});
+
+// 格式选择
+document.querySelectorAll('#formatChips .chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    if (chip.classList.contains('disabled')) return;
+    document.querySelectorAll('#formatChips .chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    selectedFormat = chip.dataset.format;
+    updateConvertBtn();
+  });
+});
+document.querySelector('#formatChips .chip[data-format="md"]').classList.add('active');
+
+function updateConvertBtn() {
+  const ready = files.filter(f => f.supported && f.status !== 'done' && f.status !== 'converting');
+  const chip = document.querySelector(`#formatChips .chip[data-format="${selectedFormat}"]`);
+  const fmtOk = chip && !chip.classList.contains('disabled');
+  $('convertBtn').disabled = ready.length === 0 || !fmtOk;
+  if (ready.length > 0 && fmtOk) $('convertStat').textContent = `${ready.length} 本书 · 输出 ${selectedFormat}`;
+  else if (!fmtOk) $('convertStat').textContent = '当前格式不可用';
+  else $('convertStat').textContent = '选择文件和格式后开始转换';
+}
+
+// 转换
+$('convertBtn').addEventListener('click', () => {
+  const ready = files.filter(f => f.supported && f.status !== 'done');
+  if (!ready.length) return;
+  startConvert(ready, 'convert');
+});
+
+function startConvert(targets, mode) {
+  const overlay = $('progOverlay'), bar = $('progBar'), pct = $('progPercent'),
+        stepsEl = $('progSteps'), title = $('progTitle');
+  overlay.classList.remove('hidden');
+  stepsEl.innerHTML = ''; bar.style.width = '0%'; pct.textContent = '0%';
+  title.textContent = mode === 'compress' ? '压缩中…' : '转换中…';
+
+  const stepEls = {};
+  targets.forEach((f, i) => {
+    const el = document.createElement('div');
+    el.className = 'prog-step';
+    el.innerHTML = `<div class="prog-step-icon">⏳</div><div class="prog-step-text">${esc(f.name)}</div><div class="prog-step-msg"></div>`;
+    stepsEl.appendChild(el); stepEls[i] = el;
+  });
+
+  const ids = targets.map(f => f.id).join(',');
+  const url = mode === 'compress' ? `/api/compress?ids=${encodeURIComponent(ids)}` : `/api/convert?ids=${encodeURIComponent(ids)}&to=${selectedFormat}`;
+  const es = new EventSource(url);
+
+  es.addEventListener('item', e => {
+    const d = JSON.parse(e.data);
+    const el = stepEls[d.index]; if (!el) return;
+    const file = targets[d.index];
+    if (d.status === 'converting') {
+      el.classList.add('active');
+      el.querySelector('.prog-step-icon').textContent = '';
+      el.querySelector('.prog-step-msg').textContent = d.message || (mode==='convert' ? `epub → ${d.to}` : '压缩中');
+      file.status = 'converting'; renderQueue();
+    } else if (d.status === 'done') {
+      el.classList.remove('active'); el.classList.add('done');
+      el.querySelector('.prog-step-icon').textContent = '✓';
+      el.querySelector('.prog-step-msg').textContent = d.message || d.output || '';
+      file.status = 'done'; file.result_id = d.result_id; file.output = d.output;
+      file.result_size = d.size;
+      if (mode === 'compress') file.compress_done = true;
+      // 加入结果池
+      results.push({ result_id: d.result_id, name: d.output, size: d.size, source: file.name });
+      renderQueue();
+    } else if (d.status === 'error') {
+      el.classList.remove('active'); el.classList.add('error');
+      el.querySelector('.prog-step-icon').textContent = '✕';
+      el.querySelector('.prog-step-msg').textContent = (d.message || '失败').slice(0, 50);
+      file.status = 'error'; file.message = d.message; renderQueue();
+    }
+    const pv = Math.round(((d.index + (d.status === 'done' ? 1 : d.status === 'error' ? 1 : 0.5)) / d.total) * 100);
+    bar.style.width = pv + '%'; pct.textContent = pv + '%';
+  });
+  es.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    bar.style.width = '100%'; pct.textContent = '100%';
+    title.textContent = `完成 · ${d.success}/${d.total} 成功`;
+    es.close();
+    setTimeout(() => overlay.classList.add('hidden'), 1200);
+  });
+  es.addEventListener('fatal', e => { const d = JSON.parse(e.data); title.textContent='错误'; pct.textContent=d.message; es.close(); });
+  es.onerror = () => { es.close(); title.textContent='连接中断'; };
+}
+
+// 压缩
+function renderCompressList() {
+  const list = files.filter(f => f.supported && f.needs_compress && !f.compress_done);
+  const el = $('compressList');
+  if (!list.length) { el.innerHTML = '<div class="empty-hint" style="padding:16px">没有超过 {{ target_mb }}MB 的书籍</div>'; return; }
+  el.innerHTML = list.map(f => `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:12px">
+    <span style="color:var(--pink)">📚</span>
+    <span style="flex:1;color:var(--text-bright);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+    <span style="color:var(--warn);font-family:'SF Mono',monospace">${fmtSize(f.size)}</span>
+  </div>`).join('');
+}
+function updateCompressBtn() {
+  const list = files.filter(f => f.supported && f.needs_compress && !f.compress_done);
+  $('compressBtn').disabled = list.length === 0;
+  $('compressStat').textContent = list.length ? `${list.length} 本待压缩` : '暂无需压缩文件';
+}
+$('compressBtn').addEventListener('click', () => {
+  const list = files.filter(f => f.supported && f.needs_compress && !f.compress_done);
+  if (!list.length) return;
+  startConvert(list, 'compress');
+});
+
+// 元数据列表
+function renderMetaList() {
+  const list = files.filter(f => f.supported);
+  const el = $('metaList');
+  if (!list.length) { el.innerHTML = '<div class="empty-hint" style="padding:16px">暂无书籍</div>'; return; }
+  el.innerHTML = list.map((f, i) => {
+    const m = f.metadata || {};
+    const realIdx = files.indexOf(f);
+    const title = m.title || f.name;
+    const author = (m.creators||[]).map(c=>c.name).join(', ') || '未知';
+    return `<div style="display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;cursor:pointer" data-meta-idx="${realIdx}">
+      <span style="color:var(--pink);font-size:16px">📖</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:var(--text-bright);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(title)}</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${esc(author)} · ${m.publisher||'未知出版社'} · ${m.date||'未知日期'}</div>
+      </div>
+      <span style="font-size:11px;color:var(--text-dim)">查看 ›</span>
+    </div>`;
+  }).join('');
+}
+
+// 元数据弹层
+queueEl.addEventListener('click', e => {
+  const t = e.target.closest('[data-action]');
+  if (!t) {
+    if (e.target.classList.contains('remove')) {
+      const idx = parseInt(e.target.dataset.idx);
+      files.splice(idx, 1); renderQueue();
+    }
+    return;
+  }
+  const idx = parseInt(t.dataset.idx);
+  const f = files[idx];
+  if (t.dataset.action === 'meta') showMetaModal(f);
+  else if (t.dataset.action === 'md') exportMd(f.id);
+});
+$('metaList').addEventListener('click', e => {
+  const t = e.target.closest('[data-meta-idx]');
+  if (!t) return;
+  showMetaModal(files[parseInt(t.dataset.metaIdx)]);
+});
+$('metaCloseBtn').addEventListener('click', () => $('metaModal').classList.add('hidden'));
+$('metaModal').addEventListener('click', e => { if (e.target.id === 'metaModal') $('metaModal').classList.add('hidden'); });
+
+function showMetaModal(f) {
+  const m = f.metadata || {};
+  $('metaTitle').textContent = m.title || f.name;
+  $('metaSub').textContent = f.name + ' · ' + fmtSize(f.size);
+  const rows = [
+    ['作者', (m.creators||[]).map(c=>c.name + (c.role?' ('+c.role+')':'')).join(', ') || '—'],
+    ['ISBN/标识', m.identifier || '—'],
+    ['语言', m.language || '—'],
+    ['出版社', m.publisher || '—'],
+    ['出版日期', m.date || '—'],
+    ['主题', (m.subjects||[]).join(', ') || '—'],
+    ['版权', m.rights || '—'],
+    ['EPUB版本', m.epub_version || '—'],
+    ['OPF路径', m.opf_path || '—'],
+    ['章节数', m.spine_count || 0],
+    ['资源数', m.manifest_count || 0],
+    ['封面', m.cover_href || '无'],
+  ];
+  if (m.error) rows.push(['解析告警', m.error]);
+  $('metaGrid').innerHTML = rows.map(([k,v]) => `<div class="k">${k}</div><div class="v">${esc(String(v))}</div>`).join('');
+  if (m.cover_href) {
+    $('metaGrid').innerHTML += `<div class="k">封面预览</div><div class="v"><img src="/api/cover/${f.id}" style="max-width:160px;border-radius:6px;border:1px solid var(--border)" onerror="this.style.display='none'"></div>`;
+  }
+  $('metaModal').classList.remove('hidden');
+}
+
+async function exportMd(fid) {
+  try {
+    const r = await fetch(`/api/markdown/${fid}`);
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    results.push({ result_id: d.result_id, name: d.output, size: d.size, source: '元数据导出' });
+    renderQueue();
+    renderGitResultList();
+    // 自动下载
+    const a = document.createElement('a');
+    a.href = `/api/download/${d.result_id}`; a.download = d.output; a.click();
+  } catch (e) { alert('导出失败: ' + e.message); }
+}
+
+// git 推送
+function renderGitResultList() {
+  const el = $('gitResultList');
+  if (!results.length) { el.innerHTML = '<div class="empty-hint" style="padding:20px">暂无结果文件，请先转换或压缩</div>'; updateGitBtn(); return; }
+  el.innerHTML = results.map((r, i) => `
+    <div class="git-result-item" data-gr-idx="${i}">
+      <div class="chk">✓</div>
+      <span style="color:var(--pink)">📄</span>
+      <span class="name">${esc(r.name)} <span style="color:var(--text-dim);font-size:11px">← ${esc(r.source)}</span></span>
+      <span class="sz">${fmtSize(r.size)}</span>
+    </div>`).join('');
+  el.querySelectorAll('.git-result-item').forEach(item => {
+    item.addEventListener('click', () => { item.classList.toggle('checked'); updateGitBtn(); });
+    item.classList.add('checked');
+  });
+  updateGitBtn();
+}
+function updateGitBtn() {
+  const checked = document.querySelectorAll('.git-result-item.checked').length;
+  $('gitPushBtn').disabled = checked === 0;
+  $('gitStat').textContent = checked ? `已选 ${checked} 个文件` : '未选择文件';
+}
+
+// 预设
+document.querySelectorAll('.git-preset').forEach(p => {
+  p.addEventListener('click', () => {
+    const host = p.dataset.host;
+    if (host === 'github') { $('gitRepo').placeholder = 'https://github.com/user/repo.git'; }
+    else { $('gitRepo').placeholder = 'https://your-gitea.com/user/repo.git'; }
+    $('gitRepo').focus();
+  });
+});
+
+// 持久化 git 配置
+['gitRepo','gitBranch','gitToken','gitAuthor','gitEmail','gitMsg'].forEach(id => {
+  const el = $(id);
+  const saved = localStorage.getItem('epub_'+id);
+  if (saved !== null) el.value = saved;
+  el.addEventListener('change', () => localStorage.setItem('epub_'+id, el.value));
+});
+
+$('gitPushBtn').addEventListener('click', async () => {
+  const ids = Array.from(document.querySelectorAll('.git-result-item.checked')).map(el => results[parseInt(el.dataset.grIdx)].result_id);
+  if (!ids.length) return;
+  const body = {
+    repo_url: $('gitRepo').value.trim(),
+    branch: $('gitBranch').value.trim() || 'main',
+    token: $('gitToken').value.trim(),
+    commit_msg: $('gitMsg').value.trim() || 'chore: 推送 EPUB 转换结果',
+    author_name: $('gitAuthor').value.trim() || 'epub-convert',
+    author_email: $('gitEmail').value.trim() || 'epub-convert@local',
+    result_ids: ids,
+  };
+  const logEl = $('gitLog');
+  logEl.classList.remove('hidden','ok','err');
+  logEl.textContent = '推送中…';
+  $('gitPushBtn').disabled = true;
+  try {
+    const r = await fetch('/api/push', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json();
+    logEl.textContent = d.log || '';
+    if (d.ok) {
+      logEl.classList.add('ok');
+      logEl.textContent = `✓ 推送成功 · ${d.pushed} 个文件\n\n${d.log||''}`;
+    } else {
+      logEl.classList.add('err');
+      logEl.textContent = `✕ ${d.error||'推送失败'}\n\n${d.log||''}`;
+    }
+  } catch (e) {
+    logEl.classList.add('err');
+    logEl.textContent = '✕ ' + e.message;
+  } finally {
+    $('gitPushBtn').disabled = false;
+  }
+});
+
+// 清空
+$('clearBtn').addEventListener('click', () => { files.length = 0; renderQueue(); });
+
+renderQueue();
+</script>
+</body>
+</html>
