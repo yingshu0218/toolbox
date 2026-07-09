@@ -472,7 +472,7 @@
     🔍 开始检测本机网络
   </button>
   <div style="margin-top:8px;font-size:12px;color:var(--text-dim)">
-    9 步全面体检：接口 → 连通性 → DNS → 延迟 → 丢包 → 带宽 → 路由器 → 双栈 → 评分
+    8 步全面体检：接口 → 连通性 → DNS → 延迟&丢包 → 带宽 → 路由器 → 双栈 → 评分
   </div>
 </div>
 
@@ -486,7 +486,7 @@
   <div class="q-metrics" id="qMetrics"></div>
   <!-- 延迟柱状图 -->
   <div class="q-latency"><div class="q-latency-card" id="qLatencyCard">
-    <div class="q-latency-title">📡 延迟矩阵</div>
+    <div class="q-latency-title">📡 延迟 & 丢包</div>
     <div id="qLatencyBars"></div>
   </div></div>
   <!-- 优化建议 -->
@@ -1095,8 +1095,7 @@ var Q_STEPS = [
   {key: 'interfaces', title: '网络接口扫描'},
   {key: 'connectivity', title: '互联网连通性'},
   {key: 'dns_perf', title: 'DNS 解析性能'},
-  {key: 'latency_matrix', title: '延迟矩阵'},
-  {key: 'packet_loss', title: '丢包率 & 抖动'},
+  {key: 'latency', title: '延迟 & 丢包检测'},
   {key: 'bandwidth', title: '带宽估算'},
   {key: 'router', title: '本地路由器检测'},
   {key: 'ipv6', title: 'IPv4/IPv6 双栈'},
@@ -1209,7 +1208,7 @@ function renderQualityResults(data, meta) {
   }
   renderQScore(data.score || {});
   renderQMetrics(data);
-  renderQLatency((data.latency_matrix || {}).targets || []);
+  renderQLatency((data.latency || {}).targets || []);
   renderQTips(data.score || {});
   renderQSteps(data);
 }
@@ -1226,8 +1225,7 @@ function renderQScore(score) {
 }
 
 function renderQMetrics(data) {
-  var matrix = data.latency_matrix || {};
-  var pl = data.packet_loss || {};
+  var lat = data.latency || {};
   var dns = data.dns_perf || {};
   var bw = data.bandwidth || {};
   var router = data.router || {};
@@ -1244,8 +1242,9 @@ function renderQMetrics(data) {
   var routerPct = routerPing < 1 ? 100 : (routerPing < 3 ? 90 : (routerPing < 10 ? 65 : (routerPing < 30 ? 40 : 10)));
 
   var items = [
-    {label: '延迟', value: matrix.overall_avg_ms || '—', unit: 'ms', pct: Math.max(0, Math.min(100, 100 - ((matrix.overall_avg_ms || 500) / 5)))},
-    {label: '丢包率', value: pl.loss_pct !== undefined ? pl.loss_pct : '—', unit: '%', pct: Math.max(0, 100 - (pl.loss_pct || 0) * 20)},
+    {label: '国内延迟', value: lat.domestic_avg_ms || '—', unit: 'ms', pct: Math.max(0, Math.min(100, 100 - ((lat.domestic_avg_ms || 200) / 2)))},
+    {label: '海外延迟', value: lat.overseas_avg_ms || '—', unit: 'ms', pct: Math.max(0, Math.min(100, 100 - ((lat.overseas_avg_ms || 500) / 5)))},
+    {label: '丢包率', value: lat.loss_pct !== undefined ? lat.loss_pct : '—', unit: '%', pct: Math.max(0, 100 - (lat.loss_pct || 0) * 20)},
     {label: 'DNS', value: dns.avg_ms || '—', unit: 'ms', pct: Math.max(0, Math.min(100, 100 - ((dns.avg_ms || 300) / 3)))},
     {label: '带宽', value: bw.download_speed_mbps || '—', unit: 'Mbps', pct: Math.max(0, Math.min(100, (bw.download_speed_mbps || 0)))},
   ];
@@ -1312,8 +1311,7 @@ function renderQSteps(data) {
   var interfaces = data.interfaces || {};
   var conn = data.connectivity || {};
   var dns = data.dns_perf || {};
-  var matrix = data.latency_matrix || {};
-  var pl = data.packet_loss || {};
+  var matrix = data.latency || {};
   var bw = data.bandwidth || {};
   var router = data.router || {};
   var ipv6 = data.ipv6 || {};
@@ -1363,9 +1361,9 @@ function renderQSteps(data) {
       }).join('')
     },
     {
-      num: 4, title: '延迟矩阵',
-      summary: '平均 ' + (matrix.overall_avg_ms || '—') + 'ms',
-      status: (matrix.overall_avg_ms || 999) < 100 ? 'ok' : ((matrix.overall_avg_ms || 999) < 200 ? 'warn' : 'err'),
+      num: 4, title: '延迟 & 丢包检测',
+      summary: '国内 ' + (matrix.domestic_avg_ms || '—') + 'ms · 海外 ' + (matrix.overseas_avg_ms || '—') + 'ms · 丢包 ' + (matrix.loss_pct || '—') + '%',
+      status: (matrix.domestic_avg_ms || 999) < 100 ? 'ok' : ((matrix.domestic_avg_ms || 999) < 200 ? 'warn' : 'err'),
       body: (matrix.targets || []).map(function(t) {
         var cls = t.loss_pct > 0 ? 'err' : (t.avg_ms < 50 ? 'ok' : (t.avg_ms < 150 ? 'warn' : 'err'));
         var unreliableTag = t.unreliable ? '<span style="color:var(--warn);font-size:10px;margin-left:4px">⚠ 代理/ICMP干扰</span>' : '';
@@ -1374,20 +1372,14 @@ function renderQSteps(data) {
                '<span class="q-range">min:' + t.min_ms + 'ms max:' + t.max_ms + 'ms ' +
                (t.loss_pct > 0 ? '<span style="color:var(--danger);font-weight:600">丢包' + t.loss_pct + '%</span>' : '') +
                '</span>' + unreliableTag + '</span></div>';
-      }).join('')
+      }).join('') +
+      '<div class="kv"><span class="k">国内均值</span><span class="v ' + ((matrix.domestic_avg_ms || 999) < 100 ? 'good' : 'warn') + '">' + (matrix.domestic_avg_ms || '—') + 'ms</span></div>' +
+      '<div class="kv"><span class="k">海外均值</span><span class="v ' + ((matrix.overseas_avg_ms || 999) < 200 ? 'good' : 'warn') + '">' + (matrix.overseas_avg_ms || '—') + 'ms</span></div>' +
+      '<div class="kv"><span class="k">丢包率</span><span class="v ' + ((matrix.loss_pct || 0) < 1 ? 'good' : 'warn') + '">' + (matrix.loss_pct || '—') + '%</span></div>' +
+      '<div class="kv"><span class="k">抖动</span><span class="v">' + (matrix.jitter_ms || '—') + 'ms</span></div>'
     },
     {
-      num: 5, title: '丢包率 & 抖动',
-      summary: '丢包 ' + (pl.loss_pct || '—') + '% · 抖动 ' + (pl.jitter_ms || '—') + 'ms',
-      status: (pl.loss_pct || 100) < 1 ? 'ok' : ((pl.loss_pct || 100) < 5 ? 'warn' : 'err'),
-      body: '<div class="kv"><span class="k">目标</span><span class="v ip">' + (pl.target || '223.5.5.5') + ' (' + (pl.label || '') + ')</span></div>' +
-            '<div class="kv"><span class="k">发送/接收</span><span class="v">' + (pl.sent || '?') + ' / ' + (pl.received || '?') + '</span></div>' +
-            '<div class="kv"><span class="k">丢包率</span><span class="v ' + ((pl.loss_pct || 0) < 1 ? 'good' : 'warn') + '">' + (pl.loss_pct || '—') + '%</span></div>' +
-            '<div class="kv"><span class="k">平均延迟</span><span class="v">' + (pl.avg_ms || '—') + 'ms</span></div>' +
-            '<div class="kv"><span class="k">抖动</span><span class="v">' + (pl.jitter_ms || '—') + 'ms</span></div>'
-    },
-    {
-      num: 6, title: '带宽估算',
+      num: 5, title: '带宽估算',
       summary: (bw.download_speed_mbps || '—') + ' Mbps' + (bw.incomplete ? ' (测速中断)' : ''),
       status: bw.incomplete ? 'warn' : ((bw.download_speed_mbps || 0) > 10 ? 'ok' : ((bw.download_speed_mbps || 0) > 1 ? 'warn' : 'err')),
       body: (bw.error ? '<div class="kv"><span class="k">状态</span><span class="v warn">' + bw.error + '</span></div>' : '') +
@@ -1397,7 +1389,7 @@ function renderQSteps(data) {
             (bw.url ? '<div class="kv"><span class="k">测速源</span><span class="v" style="font-size:11px;word-break:break-all">' + bw.url + '</span></div>' : '')
     },
     {
-      num: 7, title: '本地路由器检测',
+      num: 6, title: '本地路由器检测',
       summary: (router.detected ? (router.router_name_short || router.router_name || router.gateway_ip) + ' · ' + (router.ping_avg_ms || '—') + 'ms' : (router.error || '未检测')),
       status: router.detected ? ((router.ping_avg_ms || 999) < 5 ? 'ok' : ((router.ping_avg_ms || 999) < 15 ? 'warn' : 'err')) : 'err',
       body: (function() {
@@ -1451,7 +1443,7 @@ function renderQSteps(data) {
       })()
     },
     {
-      num: 8, title: 'IPv4/IPv6 双栈',
+      num: 7, title: 'IPv4/IPv6 双栈',
       summary: (ipv6.ipv4_public || '无 IPv4') + (ipv6.ipv6_public ? ' · ' + ipv6.ipv6_public : ''),
       status: ipv6.dual_stack ? 'ok' : (ipv6.ipv4_available ? 'warn' : 'err'),
       body: '<div class="kv"><span class="k">IPv4</span><span class="v ' + (ipv6.ipv4_available ? 'good' : 'warn') + '">' + (ipv6.ipv4_available ? '✓ ' + (ipv6.ipv4_public || '可用') : '✕ 不可用') + '</span></div>' +
@@ -1459,7 +1451,7 @@ function renderQSteps(data) {
             '<div class="kv"><span class="k">双栈</span><span class="v ' + (ipv6.dual_stack ? 'good' : 'warn') + '">' + (ipv6.dual_stack ? '✓ 支持' : '✕ 仅单栈') + '</span></div>'
     },
     {
-      num: 9, title: '综合评分',
+      num: 8, title: '综合评分',
       summary: '等级 ' + (score.grade || '?') + ' · ' + (score.total || '—') + '/100',
       status: (score.grade === 'A' || score.grade === 'B') ? 'ok' : ((score.grade === 'C') ? 'warn' : 'err'),
       body: (score.details || []).map(function(d) {
@@ -1480,7 +1472,7 @@ function renderQSteps(data) {
   }).join('');
 
   // 自动展开有警告的步骤
-  [0, 5, 6, 8].forEach(function(i) {
+  [0, 4, 5, 7].forEach(function(i) {
     var card = document.getElementById('qStepCard' + i);
     if (card) {
       var numEl = card.querySelector('.step-num');

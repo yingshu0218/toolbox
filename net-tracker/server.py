@@ -437,26 +437,26 @@ def q_step_dns_perf():
     return {"results": results, "avg_ms": avg_ms}
 
 
-def q_step_latency_matrix():
-    """步骤 4：延迟矩阵"""
+def q_step_latency():
+    """步骤 4：延迟 & 丢包检测（合并）
+
+    精简目标：baidu.com（国内）、114.114.114.114（国内）、google.com（海外）
+    每个目标 ping -c 10，提取 avg/min/max/stddev/loss
+    评分拆分为国内均值和海外均值
+    抖动取国内目标 stddev 的最大值
+    """
     targets = [
-        ("114.114.114.114", "114 DNS", "北京"),
-        ("101.226.4.6", "上海电信", "上海"),
-        ("202.96.128.86", "广东电信", "广州"),
-        ("1.1.1.1", "Cloudflare", "海外"),
-        ("8.8.8.8", "Google DNS", "海外"),
+        ("baidu.com", "百度", "国内"),
+        ("114.114.114.114", "114 DNS", "国内"),
+        ("google.com", "Google", "海外"),
     ]
-    gw_out, _, _ = run("netstat -rn -f inet | grep default | head -1 | awk '{print $2}'")
-    gw = gw_out.strip()
-    if gw:
-        targets.insert(0, (gw, "默认网关", "本地"))
 
     results = []
     for target, label, region in targets:
-        out, _, _ = run(f"ping -c 5 -W 2000 {target}", timeout=12)
+        out, _, _ = run(f"ping -c 10 -W 2000 {target}", timeout=15)
         m_rtt = re.search(r"round-trip min/avg/max/stddev\s*=\s*([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+)", out)
         m_loss = re.search(r"(\d+)\s+packets? transmitted.*?(\d+)\s+packets? received.*?([\d.]+)%\s+packet loss", out, re.DOTALL)
-        sent, recv, loss_pct = 5, 0, 100.0
+        sent, recv, loss_pct = 10, 0, 100.0
         if m_loss:
             sent, recv = int(m_loss.group(1)), int(m_loss.group(2))
             loss_pct = round(float(m_loss.group(3)), 1)
@@ -469,10 +469,9 @@ def q_step_latency_matrix():
             max_ms = round(float(m_rtt.group(3)), 1)
             stddev_ms = round(float(m_rtt.group(4)), 1)
 
-            # 海外目标延迟 < 1ms 不合理，可能是 ICMP 被代理/防火墙拦截或伪造
-            if avg_ms < 1.0 and region != "本地":
+            # 海外目标延迟 < 1ms 不合理，ICMP 可能被代理/防火墙拦截
+            if avg_ms < 1.0 and region == "海外":
                 unreliable = True
-                # 用 TCP 连接延迟交叉验证
                 tcp_out, _, _ = run(
                     f"curl -s -o /dev/null -w '%{{time_connect}}' --connect-timeout 3 --max-time 5 http://{target}",
                     timeout=6
@@ -494,42 +493,36 @@ def q_step_latency_matrix():
             "sent": sent, "received": recv, "unreliable": unreliable
         })
 
-    reachable = [r for r in results if r["received"] > 0]
-    overall_avg = round(sum(r["avg_ms"] for r in reachable) / len(reachable), 1) if reachable else 0
-    return {"targets": results, "overall_avg_ms": overall_avg}
+    # 国内/海外分别计算
+    domestic = [r for r in results if r["region"] == "国内" and r["received"] > 0]
+    overseas = [r for r in results if r["region"] == "海外" and r["received"] > 0]
+    domestic_avg = round(sum(r["avg_ms"] for r in domestic) / len(domestic), 1) if domestic else 0
+    overseas_avg = round(sum(r["avg_ms"] for r in overseas) / len(overseas), 1) if overseas else 0
+    # 抖动：取国内目标 stddev 最大值
+    jitter_ms = round(max((r["stddev_ms"] for r in domestic if r["stddev_ms"] > 0), default=0), 1)
+    # 总丢包率：取国内目标平均丢包
+    domestic_loss = round(sum(r["loss_pct"] for r in domestic) / len(domestic), 1) if domestic else 100.0
 
-
-def q_step_packet_loss():
-    """步骤 5：丢包率 & 抖动"""
-    target = "223.5.5.5"
-    out, _, _ = run(f"ping -c 50 -W 1000 {target}", timeout=55)
-    m_loss = re.search(r"(\d+)\s+packets? transmitted.*?(\d+)\s+packets? received.*?([\d.]+)%\s+packet loss", out, re.DOTALL)
-    m_rtt = re.search(r"round-trip min/avg/max/stddev\s*=\s*([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+)", out)
-    if m_loss and m_rtt:
-        return {
-            "target": target, "label": "阿里 DNS",
-            "sent": int(m_loss.group(1)), "received": int(m_loss.group(2)),
-            "loss_pct": round(float(m_loss.group(3)), 1),
-            "avg_ms": round(float(m_rtt.group(2)), 1),
-            "min_ms": round(float(m_rtt.group(1)), 1),
-            "max_ms": round(float(m_rtt.group(3)), 1),
-            "jitter_ms": round(float(m_rtt.group(4)), 1),
-        }
-    return {"target": target, "label": "阿里 DNS",
-            "sent": 50, "received": 0, "loss_pct": 100.0,
-            "avg_ms": 0, "min_ms": 0, "max_ms": 0, "jitter_ms": 0}
+    return {
+        "targets": results,
+        "domestic_avg_ms": domestic_avg,
+        "overseas_avg_ms": overseas_avg,
+        "overall_avg_ms": round((domestic_avg + overseas_avg) / 2, 1) if domestic_avg and overseas_avg else (domestic_avg or overseas_avg),
+        "jitter_ms": jitter_ms,
+        "loss_pct": domestic_loss,
+    }
 
 
 def q_step_bandwidth():
-    """步骤 6：带宽估算
+    """步骤 5：带宽估算（国内源）
 
-    渐进式测速：5MB → 10MB，取最快的一次完整下载。
-    总时限控制在 18 秒内，与 run_step_with_timeout(20s) 匹配。
+    使用国内 CDN 测速，总时限 ≤18s。
     """
     sources = [
-        # 5MB 快速测试（两个 CDN 任一成功即停止）
-        {"url": "http://cachefly.cachefly.net/5mb.test", "size": 5_242_880, "max_time": 8, "timeout": 10},
-        {"url": "http://speedtest.tele2.net/5MB.zip",  "size": 5_242_880, "max_time": 8, "timeout": 10},
+        # 腾讯 CDN（国内快速）
+        {"url": "https://dldir1.qq.com/qqfile/qq/QQNT/Mac/QQ_6.9.25_240422_01.dmg", "host": "dldir1.qq.com", "max_time": 8, "timeout": 10},
+        # 阿里云镜像（国内备用）
+        {"url": "https://mirrors.aliyun.com/centos/timestamp.txt", "host": "mirrors.aliyun.com", "max_time": 5, "timeout": 8},
     ]
 
     result = {
@@ -540,7 +533,7 @@ def q_step_bandwidth():
 
     for src in sources:
         url = src["url"]
-        expected_size = src["size"]
+        host = src["host"]
         max_time = src["max_time"]
         cmd_timeout = src["timeout"]
 
@@ -552,41 +545,29 @@ def q_step_bandwidth():
         parts = out.split()
         if len(parts) >= 3 and parts[2].isdigit():
             size_bytes = int(parts[2])
-            if size_bytes > 1000:
+            if size_bytes > 10000:  # 至少下载 10KB 才算有效
                 speed_bps = float(parts[0])
                 time_s = float(parts[1])
-                # 下载量必须 >= 预期大小的 30%，否则视为测速中断
-                if size_bytes >= expected_size * 0.3:
-                    mbps = round(speed_bps * 8 / 1_000_000, 2)
-                    result = {
-                        "download_speed_mbps": mbps,
-                        "bytes_downloaded": size_bytes,
-                        "time_seconds": round(time_s, 1),
-                        "url": url,
-                        "error": None,
-                        "incomplete": False,
-                        "expected_size": expected_size
-                    }
+                mbps = round(speed_bps * 8 / 1_000_000, 2)
+                result = {
+                    "download_speed_mbps": mbps,
+                    "bytes_downloaded": size_bytes,
+                    "time_seconds": round(time_s, 1),
+                    "url": url,
+                    "error": None,
+                    "incomplete": size_bytes < 500_000,  # < 500KB 视为不完整
+                    "expected_size": 0
+                }
+                if not result["incomplete"]:
                     break
-                else:
-                    # 下载量不足，记录但继续尝试其他源
-                    errors.append(
-                        f"下载中断: {size_bytes/1024/1024:.1f}/"
-                        f"{expected_size/1024/1024:.0f}MB"
-                    )
-                    result["incomplete"] = True
-                    result["bytes_downloaded"] = size_bytes
-                    result["time_seconds"] = round(time_s, 1)
-                    result["url"] = url
-                    result["expected_size"] = expected_size
-                    continue
+                # 下载不足继续尝试下一个源
+                continue
             # size_bytes == 0: curl 超时或连接失败
-            errors.append(f"{url.split('/')[2]}: "
-                         f"{'超时' if 'timeout' in stderr.lower() else '无法连接'}")
+            errors.append(f"{host}: {'超时' if 'timeout' in stderr.lower() else '无法连接'}")
         elif stderr:
-            errors.append(f"curl: {stderr[:80]}")
+            errors.append(f"{host}: {stderr[:60]}")
         elif not out:
-            errors.append("网络不通，无法连接测速源")
+            errors.append(f"{host}: 网络不通")
 
     # 汇总错误信息
     if result["download_speed_mbps"] == 0:
@@ -698,25 +679,11 @@ def q_step_router():
             if not result["model"]:
                 result["model"] = title[:60]
 
-    # 5.5 构建路由友好名称
-    name_parts = []
-    if result["manufacturer"]:
-        name_parts.append(result["manufacturer"])
-    if result["model"]:
-        # 避免重复（如 manufacturer 已包含 model 的简称）
-        if not result["model"].lower() in " ".join(name_parts).lower():
-            name_parts.append(result["model"])
-    result["router_name"] = " ".join(name_parts) if name_parts else "未知路由器"
-    if result.get("ssid"):
-        result["router_name_short"] = result["router_name"] + " (" + result["ssid"] + ")"
-    else:
-        result["router_name_short"] = result["router_name"]
-
-    # 7. 检测 WiFi 标准和信号（仅 macOS）
+    # 5.5 检测 WiFi 标准和信号（仅 macOS）— 移到名称构建之前，确保 SSID 可用于路由器名称
     iface_out, _, _ = run(f"route -n get default 2>/dev/null | grep interface | awk '{{print $2}}'")
     iface = iface_out.strip()
     if iface and iface.startswith("en"):
-        # macOS: 用 airport 或 networksetup 获取 WiFi 信息
+        # macOS: 用 airport 获取 WiFi 信息
         air_out, _, _ = run(
             f"/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I 2>/dev/null",
             timeout=5
@@ -764,7 +731,15 @@ def q_step_router():
                 else: result["signal_estimate"] = "弱"
                 result["rssi"] = rssi
 
-        # airport 未识别到 WiFi → 尝试有线检测
+        # airport 不可用或未识别到 SSID → 用 networksetup 兜底
+        if not result.get("ssid"):
+            ns_out, _, _ = run(f"networksetup -getairportnetwork {iface} 2>/dev/null", timeout=3)
+            if ns_out and "You are not associated" not in ns_out:
+                m_ns = re.search(r"Current Wi-Fi Network:\s*(.+)", ns_out)
+                if m_ns:
+                    result["ssid"] = m_ns.group(1).strip()
+
+        # 仍未识别到 WiFi → 尝试有线检测
         if not result.get("connection_type") and iface:
             out, _, _ = run(f"ifconfig {iface} 2>/dev/null")
             if out:
@@ -779,6 +754,25 @@ def q_step_router():
                     result["connection_type"] = f"有线 ({link_speed}Mbps)"
                     result["connection_type_label"] = "有线"
                     result["link_speed_mbps"] = link_speed
+
+    # 6. 构建路由友好名称（此时 SSID 已可用）
+    name_parts = []
+    if result["manufacturer"]:
+        name_parts.append(result["manufacturer"])
+    if result["model"]:
+        if not result["model"].lower() in " ".join(name_parts).lower():
+            name_parts.append(result["model"])
+    router_name = " ".join(name_parts) if name_parts else ""
+    # 如果没有厂商/型号但有 SSID，用 SSID 作为名称
+    if not router_name and result.get("ssid"):
+        router_name = result["ssid"]
+    elif not router_name:
+        router_name = "未知路由器"
+    result["router_name"] = router_name
+    if result.get("ssid") and result["ssid"] not in router_name:
+        result["router_name_short"] = router_name + " (" + result["ssid"] + ")"
+    else:
+        result["router_name_short"] = router_name
 
     # 8. 路由器带宽评估（通过不同包大小 ping 估算）
     pkt_64, _, _ = run(f"ping -c 5 -s 64 -W 1000 {gw}", timeout=8)
@@ -836,14 +830,16 @@ def q_step_score(data):
     scores["connectivity"] = conn_score
     details.append(f"连通 {reached}/5 站点 → {conn_score:.1f}/15")
 
-    matrix = data.get("latency_matrix", {})
-    overall_avg = matrix.get("overall_avg_ms", 0)
-    latency_score = max(0, (500 - overall_avg) / 400) * 20 if overall_avg > 0 else 0
-    scores["latency"] = latency_score
-    details.append(f"平均延迟 {overall_avg}ms → {latency_score:.1f}/20")
+    lat = data.get("latency", {})
+    domestic_avg = lat.get("domestic_avg_ms", 0)
+    overseas_avg = lat.get("overseas_avg_ms", 0)
+    loss_pct = lat.get("loss_pct", 100)
+    # 国内延迟评分 (满分12) + 海外延迟评分 (满分8) = 20
+    dom_score = max(0, (200 - domestic_avg) / 150) * 12 if domestic_avg > 0 else 0
+    ovs_score = max(0, (500 - overseas_avg) / 400) * 8 if overseas_avg > 0 else 0
+    scores["latency"] = dom_score + ovs_score
+    details.append(f"国内延迟 {domestic_avg}ms → {dom_score:.1f}/12, 海外延迟 {overseas_avg}ms → {ovs_score:.1f}/8")
 
-    pl = data.get("packet_loss", {})
-    loss_pct = pl.get("loss_pct", 100)
     loss_score = max(0, (5 - loss_pct) / 5) * 18
     scores["packet_loss"] = loss_score
     details.append(f"丢包率 {loss_pct}% → {loss_score:.1f}/18")
@@ -899,7 +895,8 @@ def q_step_score(data):
 
     tips = []
     if conn_score < 12: tips.append("部分站点不可达，检查防火墙或代理设置")
-    if latency_score < 12: tips.append("网络延迟偏高，检查路由器负载或更换 DNS")
+    if dom_score < 8: tips.append(f"国内延迟偏高 ({domestic_avg}ms)，检查路由器负载或更换 DNS")
+    if ovs_score < 4 and overseas_avg > 0: tips.append(f"海外延迟偏高 ({overseas_avg}ms)，可能需要优化国际链路")
     if loss_score < 12: tips.append(f"丢包率 {loss_pct}%，可能存在线路问题或无线干扰")
     if dns_score < 6: tips.append(f"DNS 解析缓慢 ({dns_avg}ms)，建议更换为 223.5.5.5")
     if bw_score < 6: tips.append(f"带宽不足 ({bw_mbps}Mbps)，检查网络套餐或网线/无线信道")
@@ -1214,8 +1211,7 @@ Q_STEPS = [
     ("interfaces", "网络接口扫描", 10),
     ("connectivity", "互联网连通性", 25),
     ("dns_perf", "DNS 解析性能", 15),
-    ("latency_matrix", "延迟矩阵", 30),
-    ("packet_loss", "丢包率 & 抖动", 30),
+    ("latency", "延迟 & 丢包检测", 30),
     ("bandwidth", "带宽估算", 20),
     ("router", "本地路由器检测", 25),
     ("ipv6", "IPv4/IPv6 双栈", 15),
@@ -1240,10 +1236,8 @@ def quality_stream():
                     report["connectivity"] = run_step_with_timeout(q_step_connectivity, timeout_sec)
                 elif key == "dns_perf":
                     report["dns_perf"] = run_step_with_timeout(q_step_dns_perf, timeout_sec)
-                elif key == "latency_matrix":
-                    report["latency_matrix"] = run_step_with_timeout(q_step_latency_matrix, timeout_sec)
-                elif key == "packet_loss":
-                    report["packet_loss"] = run_step_with_timeout(q_step_packet_loss, timeout_sec)
+                elif key == "latency":
+                    report["latency"] = run_step_with_timeout(q_step_latency, timeout_sec)
                 elif key == "bandwidth":
                     report["bandwidth"] = run_step_with_timeout(q_step_bandwidth, timeout_sec)
                 elif key == "router":
