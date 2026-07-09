@@ -273,9 +273,20 @@ def api_check_remote():
     dirs = get_cached('remote_dirs', fetcher)
     if isinstance(dirs, dict) and 'error' in dirs:
         return jsonify(dirs)
-    skip = {'home', '.git', '.github', '.workbuddy', 'node_modules', '__pycache__', 'site-packages'}
-    remote_only = [d for d in dirs if d not in local_ids
-                   and d not in skip and not d.startswith('.')]
+    # 黑名单快速过滤（已知非模块目录）
+    skip = {'home', '.git', '.github', '.workbuddy', 'node_modules',
+            '__pycache__', 'site-packages', 'bin', 'assets', 'docs', 'scripts', 'tests'}
+    candidates = [d for d in dirs if d not in local_ids
+                  and d not in skip and not d.startswith('.')]
+    # 校验候选目录是否真为模块（含 module.json），避免把 bin/assets 等非模块目录误报
+    remote_only = []
+    for d in candidates:
+        ck = f"remote_mod_{d}"
+        if force:
+            _remote_cache.pop(ck, None)
+        r = get_cached(ck, lambda d=d: fetch_remote_json(f"{d}/module.json"))
+        if isinstance(r, dict) and 'error' not in r and r.get('id'):
+            remote_only.append(d)
     return jsonify({
         'remote_dirs': remote_only,
         'local_ids': sorted(local_ids),

@@ -2,7 +2,7 @@
   "id": "net-tracker",
   "name": "网络链路检测",
   "description": "网络链路拓扑可视化 + 跳转路径表格 + 实时检测进度",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "category": "网络工具",
   "port": 5099,
   "entry": "server.py"
